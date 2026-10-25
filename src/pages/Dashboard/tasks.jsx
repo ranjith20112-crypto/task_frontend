@@ -71,7 +71,7 @@ const colors = {
 ========================================================= */
 
 const API_URL =
-  import.meta.env.VITE_API_URL || "http://localhost:5000/api";
+  import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.comapi";
 
 // Same rules the backend enforces — used only to hide actions the user cannot perform
 const getSessionUser = () => {

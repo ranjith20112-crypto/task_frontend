@@ -14,7 +14,7 @@ import {
    of the same organization.
 ========================================================= */
 
-const API_BASE_URL = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/+$/, "");
+const API_BASE_URL = (import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.comapi").replace(/\/+$/, "");
 
 const token = () =>
   localStorage.getItem("token") || localStorage.getItem("authToken") || sessionStorage.getItem("token") || "";

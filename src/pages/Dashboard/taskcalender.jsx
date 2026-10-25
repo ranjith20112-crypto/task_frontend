@@ -33,7 +33,7 @@ import {
 // BACKEND CONFIG
 // ============================================================
 
-const API_BASE = (import.meta.env.VITE_API_URL || "http://localhost:5000/api").replace(/\/$/, "");
+const API_BASE = (import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.comapi").replace(/\/$/, "");
 
 // Calendar shows the organization's REAL tasks (same records as the Tasks page)
 const API_URL = `${API_BASE}/tasks`;

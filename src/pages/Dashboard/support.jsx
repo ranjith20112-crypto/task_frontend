@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import SupportTicketThread from "./SupportTicketThread";
 
-const API_URL = "http://localhost:5000/api/support";
+const API_URL = "https://task-backend-mn8a.onrender.comapi/support";
 
 const getToken = () => localStorage.getItem("token");
 

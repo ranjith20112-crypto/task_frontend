@@ -38,7 +38,7 @@ import {
   MessageSquare,
 } from "lucide-react";
 
-const API_URL = "http://localhost:5000/api";
+const API_URL = "https://task-backend-mn8a.onrender.comapi";
 const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL || "http://localhost:5000").replace(/\/+$/, "");
 
 // Chat permissions (enforced by the API as well)
