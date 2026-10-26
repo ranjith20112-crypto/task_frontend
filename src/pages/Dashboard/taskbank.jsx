@@ -34,7 +34,7 @@ import {
    ========================================================= */
 
 const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.comapi";
+  import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com";
 
 const API_URL = API_BASE_URL.endsWith("/")
   ? `${API_BASE_URL}taskbank`
