@@ -85,7 +85,7 @@ const Login = () => {
 
     try {
       // ✅ REAL API CALL — replaces the demo setTimeout
-      const response = await API.post("API/api/auth/login", {
+      const response = await API.post("/api/auth/login", {
         email: form.email,
         password: form.password,
       });
