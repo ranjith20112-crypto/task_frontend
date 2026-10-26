@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 
 const API_URL = (
-  import.meta.env.VITE_API_URL || "http://localhost:5000"
+  import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com"
 ).replace(/\/+$/, "");
 
 const DashHeader = ({
@@ -364,7 +364,7 @@ const DashHeader = ({
     localStorage.removeItem("token");
     sessionStorage.clear();
 
-    window.location.replace("/api/login");
+    window.location.replace("/login");
   };
 
   const handleSearchToggle = (event) => {
