@@ -364,7 +364,7 @@ const DashHeader = ({
     localStorage.removeItem("token");
     sessionStorage.clear();
 
-    window.location.replace("/login");
+    window.location.replace("/api/login");
   };
 
   const handleSearchToggle = (event) => {
