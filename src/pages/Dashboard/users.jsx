@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 
 
-const API_URL = "https://task-backend-mn8a.onrender.com/api";
+const API_URL = "https://task-backend-mn8a.onrender.com";
 const TOKEN_KEYS = [
   "token",
   "authToken",
@@ -60,7 +60,7 @@ const getAuthToken = () => {
 };
 
 const api = axios.create({
-  baseURL: "https://task-backend-mn8a.onrender.com/api",
+  baseURL: "https://task-backend-mn8a.onrender.com",
   withCredentials: true,
   headers: {
     "Content-Type": "application/json",
