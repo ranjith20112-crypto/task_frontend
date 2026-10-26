@@ -185,9 +185,9 @@ const DashboardPage = () => {
 
     try {
       const [tasksRes, usersRes, departmentsRes] = await Promise.all([
-        api.get("/tasks"),
-        api.get("/users/assignable"),
-        api.get("/departments"),
+        api.get("/api/tasks"),
+        api.get("/api/users/assignable"),
+        api.get("/api/departments"),
       ]);
 
       setTasks(extractApiData(tasksRes).map(normalizeTask));
@@ -231,7 +231,7 @@ const DashboardPage = () => {
 
   const loadActivity = useCallback(async () => {
     try {
-      const res = await api.get("/notifications", { params: { limit: 15 } });
+      const res = await api.get("/api/notifications", { params: { limit: 15 } });
       setActivity(res.data?.data || []);
       setActivityUnread(res.data?.unread || 0);
     } catch {
@@ -256,7 +256,7 @@ const DashboardPage = () => {
 
   const markAllActivityRead = async () => {
     try {
-      await api.patch("/notifications/read-all");
+      await api.patch("/api/notifications/read-all");
       setActivity((items) => items.map((n) => ({ ...n, read: true })));
       setActivityUnread(0);
     } catch {
