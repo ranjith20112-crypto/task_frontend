@@ -33,7 +33,13 @@ import {
 // BACKEND CONFIG
 // ============================================================
 
-const API_BASE = (import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com").replace(/\/$/, "");
+// FIX: backend routes live under /api. This works whether VITE_API_URL
+// ends with "/api" or not — the result is ALWAYS "https://.../api".
+const API_BASE =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
 
 // Calendar shows the organization's REAL tasks (same records as the Tasks page)
 const API_URL = `${API_BASE}/tasks`;
