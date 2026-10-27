@@ -38,8 +38,21 @@ import {
   MessageSquare,
 } from "lucide-react";
 
-const API_URL = "https://task-backend-mn8a.onrender.comapi";
-const SOCKET_URL = (import.meta.env.VITE_SOCKET_URL || "http://localhost:5000").replace(/\/+$/, "");
+// FIX: the old API address was ".onrender.comapi" (missing "/") and the socket
+// pointed to localhost:5000, which never works on the live site.
+// BACKEND_ORIGIN = server address WITHOUT /api (used by the socket)
+// API_URL        = server address WITH /api (used by chat requests)
+const BACKEND_ORIGIN = String(
+  import.meta.env.VITE_SOCKET_URL ||
+    import.meta.env.VITE_API_URL ||
+    "https://task-backend-mn8a.onrender.com"
+)
+  .trim()
+  .replace(/\/+$/, "")
+  .replace(/\/api$/, "");
+
+const API_URL = `${BACKEND_ORIGIN}/api`;
+const SOCKET_URL = BACKEND_ORIGIN;
 
 // Chat permissions (enforced by the API as well)
 const chatCan = (action) => {
@@ -111,12 +124,16 @@ const getCurrentUserId = () => {
 
 const API = axios.create({
   baseURL: API_URL,
-  withCredentials: true,
+  // Bearer-token auth — cookies not needed (avoids CORS errors)
+  withCredentials: false,
   headers: { "Content-Type": "application/json" },
 });
 
 API.interceptors.request.use(
   (config) => {
+    // Safety net: "/api/chat/..." and "/chat/..." both become .../api/chat/...
+    if (config.url?.startsWith("/api/")) config.url = config.url.slice(4);
+
     const token = getAuthToken();
 
     if (token) {
@@ -204,7 +221,7 @@ const getErrorMessage = (error) => {
   }
 
   if (!error?.response) {
-    return "Cannot connect to the backend on port 5000.";
+    return `Cannot connect to the chat server (${BACKEND_ORIGIN}). Please try again.`;
   }
 
   return message || error.message || "Something went wrong.";
@@ -953,8 +970,13 @@ export default function Chats() {
 
     const socket = io(SOCKET_URL, {
       auth: { token },
-      withCredentials: true,
+      withCredentials: false,
       transports: ["websocket", "polling"],
+      // Render free tier sleeps — keep retrying while it wakes up
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 2000,
+      timeout: 20000,
     });
 
     socketRef.current = socket;
