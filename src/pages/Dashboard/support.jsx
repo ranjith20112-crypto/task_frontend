@@ -91,14 +91,39 @@ const Support = () => {
     setFaqsLoading(true);
     setFaqsError("");
 
+    // FAQs can come from two backend routes:
+    //   GET /api/support/faqs  (support routes)
+    //   GET /api/faqs          (faqRoutes — where "Manage FAQs" saves them)
+    // Try both so FAQs added from the admin page always show here.
+    const toList = (data) =>
+      Array.isArray(data) ? data
+        : Array.isArray(data?.data) ? data.data
+        : Array.isArray(data?.faqs) ? data.faqs
+        : [];
+
     try {
-      const response = await fetch(`${API_URL}/faqs`, {
-        headers: getHeaders(),
-      });
+      let list = [];
+      let firstError = null;
 
-      const data = await readResponse(response);
+      for (const url of [`${API_URL}/faqs`, `${API_BASE}/faqs`]) {
+        try {
+          const response = await fetch(url, { headers: getHeaders() });
+          const data = await readResponse(response);
+          list = toList(data);
+          if (list.length) break;
+        } catch (err) {
+          firstError = firstError || err;
+        }
+      }
 
-      setFaqs(Array.isArray(data.data) ? data.data : []);
+      if (!list.length && firstError) throw firstError;
+
+      // Hidden FAQs (isActive: false) are not shown to users
+      setFaqs(
+        list
+          .filter((faq) => faq && faq.isActive !== false)
+          .sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+      );
     } catch (error) {
       setFaqsError(error.message || "Unable to load FAQs.");
     } finally {
