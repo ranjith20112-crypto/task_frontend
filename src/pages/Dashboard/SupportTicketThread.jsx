@@ -8,7 +8,21 @@ import API from "../../api/config";
    Super Admin dashboard (support team).
 ========================================================= */
 
+// FIX: full backend address so replies work no matter how
+// src/api/config.js sets its baseURL (with or without /api).
+// Axios ignores baseURL when the URL is absolute; the token interceptor still runs.
+const API_BASE =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
+
 const STAFF_ROLES = ["SuperAdmin", "Admin"];
+
+const formatDate = (value) => {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? "" : date.toLocaleString();
+};
 
 const SupportTicketThread = ({ ticket, staff = false, onUpdated }) => {
   const [message, setMessage] = useState("");
@@ -22,21 +36,42 @@ const SupportTicketThread = ({ ticket, staff = false, onUpdated }) => {
     setSending(true);
     setError("");
     try {
-      const res = await API.post(`/api/support/tickets/${ticket._id}/reply`, { message: message.trim() });
+      const res = await API.post(`${API_BASE}/support/tickets/${ticket._id}/reply`, {
+        message: message.trim(),
+      });
       setMessage("");
-      onUpdated?.(res.data.data);
+      onUpdated?.(res.data?.data || res.data);
     } catch (err) {
-      setError(err.response?.data?.message || "Reply could not be sent.");
+      const status = err.response?.status;
+      setError(
+        status === 401
+          ? "Session expired. Please log in again."
+          : status === 404
+          ? "Reply route not found on the server (POST /api/support/tickets/:id/reply)."
+          : !err.response
+          ? "Cannot reach the server. Please try again."
+          : err.response?.data?.message || "Reply could not be sent."
+      );
     } finally {
       setSending(false);
     }
   };
 
+  // Enter sends, Shift+Enter adds a new line
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      send(e);
+    }
+  };
+
   return (
     <div style={styles.wrap}>
+      <style>{`@keyframes stt-spin { to { transform: rotate(360deg); } }`}</style>
+
       <div style={{ ...styles.bubble, ...styles.userBubble }}>
         <div style={styles.who}>
-          <UserRound size={12} /> {ticket.raisedBy?.name || "You"} · {new Date(ticket.createdAt).toLocaleString()}
+          <UserRound size={12} /> {ticket.raisedBy?.name || "You"} · {formatDate(ticket.createdAt)}
         </div>
         <div style={styles.text}>{ticket.message}</div>
       </div>
@@ -44,11 +79,11 @@ const SupportTicketThread = ({ ticket, staff = false, onUpdated }) => {
       {responses.map((r, i) => {
         const fromStaff = STAFF_ROLES.includes(r.byRole);
         return (
-          <div key={i} style={{ ...styles.bubble, ...(fromStaff ? styles.staffBubble : styles.userBubble) }}>
+          <div key={r._id || i} style={{ ...styles.bubble, ...(fromStaff ? styles.staffBubble : styles.userBubble) }}>
             <div style={styles.who}>
               {fromStaff ? <ShieldCheck size={12} /> : <UserRound size={12} />}
               {r.byName || (fromStaff ? "Support" : "User")}
-              {fromStaff ? " (Support)" : ""} · {new Date(r.at).toLocaleString()}
+              {fromStaff ? " (Support)" : ""} · {formatDate(r.at)}
             </div>
             <div style={styles.text}>{r.message}</div>
           </div>
@@ -59,13 +94,23 @@ const SupportTicketThread = ({ ticket, staff = false, onUpdated }) => {
         <textarea
           value={message}
           onChange={(e) => setMessage(e.target.value)}
+          onKeyDown={handleKeyDown}
           placeholder={staff ? "Write a reply to the user…" : "Add more details or reply to support…"}
           rows={2}
           maxLength={3000}
           style={styles.input}
         />
-        <button type="submit" disabled={sending || !message.trim()} style={{ ...styles.send, opacity: sending || !message.trim() ? 0.6 : 1 }}>
-          {sending ? <Loader2 size={13} /> : <Send size={13} />} {staff ? "Reply" : "Send"}
+        <button
+          type="submit"
+          disabled={sending || !message.trim()}
+          style={{ ...styles.send, opacity: sending || !message.trim() ? 0.6 : 1 }}
+        >
+          {sending ? (
+            <Loader2 size={13} style={{ animation: "stt-spin .9s linear infinite" }} />
+          ) : (
+            <Send size={13} />
+          )}{" "}
+          {sending ? "Sending…" : staff ? "Reply" : "Send"}
         </button>
       </form>
       {error && <div style={styles.error}>{error}</div>}
