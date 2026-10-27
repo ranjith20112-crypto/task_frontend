@@ -4717,6 +4717,17 @@ const TasksPage = () => {
     setSearch,
   ] = useState("");
 
+  // Header search → open this page filtered (?search=… or the live "workspace-search" event)
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("search");
+    if (fromUrl) setSearch(fromUrl);
+    const onSearch = (event) => {
+      if (event.detail?.path === window.location.pathname) setSearch(event.detail.query || "");
+    };
+    window.addEventListener("workspace-search", onSearch);
+    return () => window.removeEventListener("workspace-search", onSearch);
+  }, []);
+
   const [
     statusFilter,
     setStatusFilter,
