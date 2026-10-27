@@ -12,8 +12,14 @@ import {
    API / calculation logic preserved
 ========================================================= */
 
+// FIX: backend routes live under /api. This always ends up as
+// "https://task-backend-mn8a.onrender.com/api", whether VITE_API_URL
+// ends with "/api" or not.
 const API_URL =
-  import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com";
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
 
 const getAuthToken = () =>
   localStorage.getItem("token") ||
@@ -33,10 +39,14 @@ const getCurrentUser = () => {
 
 const api = axios.create({
   baseURL: API_URL,
-  withCredentials: true,
+  // Bearer-token auth — cookies not needed (avoids CORS errors)
+  withCredentials: false,
 });
 
 api.interceptors.request.use((config) => {
+  // Safety net: "/api/tasks" and "/tasks" both become .../api/tasks
+  if (config.url?.startsWith("/api/")) config.url = config.url.slice(4);
+
   const token = getAuthToken();
   if (token) {
     config.headers = config.headers || {};
@@ -210,7 +220,7 @@ const DashboardPage = () => {
           window.location.href = "/login";
         }, 1500);
       } else if (err?.code === "ERR_NETWORK") {
-        setError("Cannot reach the server. Is the backend running on port 5000?");
+        setError("Cannot reach the server. It may be waking up — please retry in a few seconds.");
       } else {
         setError(
           err?.response?.data?.message || "Unable to load dashboard data."
