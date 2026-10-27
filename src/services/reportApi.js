@@ -1,12 +1,23 @@
-const API_BASE = "https://task-backend-mn8a.onrender.comapi"; // change when deployed
+// src/services/reportApi.js
+// FIX: the old address was "https://task-backend-mn8a.onrender.comapi"
+// (missing "/" before "api"), so every report request failed.
+// This always ends up as "https://task-backend-mn8a.onrender.com/api",
+// whether VITE_API_URL ends with "/api" or not.
+const API_BASE =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
 
-// ⚠️ Adjust to match however YOUR login stores the token
+// Reads the token saved at login
 const getAuthToken = () =>
-  localStorage.getItem("token") ||
-  localStorage.getItem("authToken") ||
-  localStorage.getItem("accessToken") ||
-  sessionStorage.getItem("token") ||
-  "";
+  (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("accessToken") ||
+    sessionStorage.getItem("token") ||
+    ""
+  ).replace(/^"|"$/g, "");
 
 const authHeaders = () => {
   const token = getAuthToken();
@@ -21,11 +32,17 @@ const buildParams = (filters = {}) => {
   return params.toString();
 };
 
+// Network / CORS failures give a clear message instead of "Failed to fetch"
+const request = async (url) => {
+  try {
+    return await fetch(url, { headers: authHeaders(), credentials: "omit" });
+  } catch {
+    throw new Error(`Cannot reach the server at ${API_BASE}. Please try again.`);
+  }
+};
+
 export const getReportSummary = async (filters = {}) => {
-  const res = await fetch(
-    `${API_BASE}/reports/summary?${buildParams(filters)}`,
-    { headers: authHeaders() }
-  );
+  const res = await request(`${API_BASE}/reports/summary?${buildParams(filters)}`);
 
   const json = await res.json().catch(() => ({}));
 
@@ -33,17 +50,17 @@ export const getReportSummary = async (filters = {}) => {
     if (res.status === 401) {
       throw new Error("Session expired. Please log in again.");
     }
-    throw new Error(json.message || "Failed to load report");
+    if (res.status === 404) {
+      throw new Error("Report route not found on the server (GET /api/reports/summary).");
+    }
+    throw new Error(json.message || `Failed to load report (${res.status})`);
   }
 
-  return json.data;
+  return json.data || json;
 };
 
 export const exportReportCSV = async (filters = {}) => {
-  const res = await fetch(
-    `${API_BASE}/reports/export?${buildParams(filters)}`,
-    { headers: authHeaders() }
-  );
+  const res = await request(`${API_BASE}/reports/export?${buildParams(filters)}`);
 
   const text = await res.text();
 
@@ -61,7 +78,8 @@ export const exportReportCSV = async (filters = {}) => {
     throw new Error(message);
   }
 
-  const blob = new Blob([text], { type: "text/csv;charset=utf-8;" });
+  // ﻿ lets Excel open the file with the right encoding
+  const blob = new Blob(["﻿" + text], { type: "text/csv;charset=utf-8;" });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
 
