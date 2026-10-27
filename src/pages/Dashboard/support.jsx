@@ -797,12 +797,12 @@ const Support = () => {
         </header>
 
         {/* FAQs */}
-        <section className="support-panel">
+        {/* <section className="support-panel">
           <div className="support-panel-header">
             <div className="support-panel-title">
               <div className="support-title-icon">
                 <HelpCircle size={20} />
-              </div>
+              </div> */}
 
               {/* <div>
                 <h2>Frequently Asked Questions</h2>
@@ -811,23 +811,23 @@ const Support = () => {
             </div>
           </div>
 
-          {faqsLoading ? (
-            <div className="support-state">Loading FAQs...</div>
-          ) : faqsError ? (
-            <div className="support-state support-error">
-              <p>{faqsError}</p>
-              <button
-                className="support-refresh-button"
-                onClick={fetchFaqs}
-              >
-                <RefreshCw size={14} />
-                Retry
-              </button>
-            </div>
-          ) : filteredFaqs.length === 0 ? (
-            <div className="support-state">
-              No FAQs found. Try a different search.
-            </div>
+          // {faqsLoading ? (
+          //   <div className="support-state">Loading FAQs...</div>
+          // ) : faqsError ? (
+          //   <div className="support-state support-error">
+          //     <p>{faqsError}</p>
+          //     <button
+          //       className="support-refresh-button"
+          //       onClick={fetchFaqs}
+          //     >
+          //       <RefreshCw size={14} />
+          //       Retry
+          //     </button>
+          //   </div>
+          // ) : filteredFaqs.length === 0 ? (
+          //   <div className="support-state">
+          //     No FAQs found. Try a different search.
+          //   </div>
           ) : (
             <div className="support-faq-list">
               {filteredFaqs.map((faq, index) => {
