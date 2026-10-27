@@ -1,0 +1,477 @@
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import axios from "axios";
+import {
+  HelpCircle,
+  Plus,
+  Pencil,
+  Trash2,
+  Search,
+  RefreshCw,
+  Sparkles,
+  X,
+  Loader2,
+  CheckCircle2,
+  AlertCircle,
+  ChevronDown,
+  ChevronUp,
+  ShieldAlert,
+} from "lucide-react";
+
+/* =========================================================
+   MANAGE FAQs — Admin / SuperAdmin only
+   Backend (src/routes/supportRoutes.js):
+     GET    /api/support/faqs          list (any logged-in user)
+     POST   /api/support/faqs          create   { question, answer }  Admin/SuperAdmin
+     POST   /api/support/faqs/seed     default FAQs (only when empty)
+     PUT    /api/support/faqs/:id      update   { question, answer }
+     DELETE /api/support/faqs/:id      delete
+========================================================= */
+
+const FAQ_PATH = "/support/faqs";
+
+const API_BASE =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
+
+const getAuthToken = () =>
+  (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("accessToken") ||
+    ""
+  ).replace(/^"|"$/g, "");
+
+const getSessionUser = () => {
+  try {
+    const raw = JSON.parse(localStorage.getItem("user") || "null");
+    return raw?.user && !raw.role ? raw.user : raw;
+  } catch {
+    return null;
+  }
+};
+
+const api = axios.create({ baseURL: API_BASE, withCredentials: false });
+
+api.interceptors.request.use((config) => {
+  const token = getAuthToken();
+  if (token) {
+    config.headers = config.headers || {};
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
+
+const extractList = (response) => {
+  const body = response?.data;
+  if (Array.isArray(body)) return body;
+  if (Array.isArray(body?.data)) return body.data;
+  if (Array.isArray(body?.faqs)) return body.faqs;
+  if (Array.isArray(body?.data?.faqs)) return body.data.faqs;
+  return [];
+};
+
+const errorText = (err, fallback) => {
+  const status = err?.response?.status;
+  if (status === 401) return "Session expired. Please log in again.";
+  if (status === 403) return "You don't have permission to manage FAQs.";
+  if (status === 404)
+    return `FAQ route not found (${err?.config?.method?.toUpperCase()} ${API_BASE}${err?.config?.url}). Check where faqRoutes is mounted.`;
+  if (!err?.response) return "Cannot reach the server. It may be waking up — please retry.";
+  return err?.response?.data?.message || fallback;
+};
+
+const emptyForm = { question: "", answer: "" };
+
+const ManageFaqs = () => {
+  const [sessionUser] = useState(getSessionUser);
+  const isAdmin = ["SuperAdmin", "Admin"].includes(sessionUser?.role);
+
+  const [faqs, setFaqs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [toast, setToast] = useState(null);
+  const [search, setSearch] = useState("");
+  const [openId, setOpenId] = useState(null);
+
+  const [showModal, setShowModal] = useState(false);
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState(emptyForm);
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState("");
+
+  const [deleteTarget, setDeleteTarget] = useState(null);
+  const [deleting, setDeleting] = useState(false);
+  const [seeding, setSeeding] = useState(false);
+
+  const showToast = (message, type = "success") => {
+    setToast({ message, type });
+    setTimeout(() => setToast(null), 3200);
+  };
+
+  const loadFaqs = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const res = await api.get(FAQ_PATH);
+      setFaqs(extractList(res));
+    } catch (err) {
+      setError(errorText(err, "Unable to load FAQs."));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (isAdmin) loadFaqs();
+    else setLoading(false);
+  }, [isAdmin, loadFaqs]);
+
+  const filtered = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return faqs;
+    return faqs.filter((f) =>
+      `${f.question || ""} ${f.answer || ""}`.toLowerCase().includes(q)
+    );
+  }, [faqs, search]);
+
+  const openCreate = () => {
+    setEditing(null);
+    setForm(emptyForm);
+    setFormError("");
+    setShowModal(true);
+  };
+
+  const openEdit = (faq) => {
+    setEditing(faq);
+    setForm({
+      question: faq.question || "",
+      answer: faq.answer || "",
+    });
+    setFormError("");
+    setShowModal(true);
+  };
+
+  const saveFaq = async (e) => {
+    e.preventDefault();
+    if (saving) return;
+    if (!form.question.trim() || !form.answer.trim()) {
+      setFormError("Please enter both a question and an answer.");
+      return;
+    }
+    setSaving(true);
+    setFormError("");
+    const payload = {
+      question: form.question.trim(),
+      answer: form.answer.trim(),
+    };
+    try {
+      if (editing) {
+        await api.put(`${FAQ_PATH}/${editing._id || editing.id}`, payload);
+        showToast("FAQ updated.");
+      } else {
+        await api.post(FAQ_PATH, payload);
+        showToast("FAQ added.");
+      }
+      setShowModal(false);
+      await loadFaqs();
+    } catch (err) {
+      setFormError(errorText(err, "Could not save the FAQ."));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!deleteTarget || deleting) return;
+    setDeleting(true);
+    try {
+      await api.delete(`${FAQ_PATH}/${deleteTarget._id || deleteTarget.id}`);
+      setFaqs((prev) => prev.filter((f) => (f._id || f.id) !== (deleteTarget._id || deleteTarget.id)));
+      showToast("FAQ deleted.");
+      setDeleteTarget(null);
+    } catch (err) {
+      showToast(errorText(err, "Could not delete the FAQ."), "error");
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const seedSamples = async () => {
+    if (seeding) return;
+    setSeeding(true);
+    try {
+      const res = await api.post(`${FAQ_PATH}/seed`);
+      showToast(res.data?.message || "Sample FAQs loaded.");
+      await loadFaqs();
+    } catch (err) {
+      showToast(errorText(err, "Could not load sample FAQs."), "error");
+    } finally {
+      setSeeding(false);
+    }
+  };
+
+  /* ---------------- not allowed ---------------- */
+  if (!isAdmin) {
+    return (
+      <div className="faq-admin">
+        <style>{css}</style>
+        <div className="faq-shell">
+          <div className="faq-empty">
+            <div className="faq-empty-icon"><ShieldAlert size={26} /></div>
+            <h3>Admins only</h3>
+            <p>Only Admin and Super Admin accounts can manage FAQs.</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="faq-admin">
+      <style>{css}</style>
+
+      <div className="faq-shell">
+        {/* HERO */}
+        <header className="faq-hero">
+          <div className="faq-hero-left">
+            <div className="faq-hero-icon"><HelpCircle size={24} /></div>
+            <div>
+              <h1>Manage FAQs</h1>
+              <p>Add, edit and remove the questions shown on the Support page.</p>
+            </div>
+          </div>
+          <div className="faq-hero-actions">
+            <button type="button" className="faq-btn ghost" onClick={seedSamples} disabled={seeding}>
+              {seeding ? <Loader2 size={15} className="spin" /> : <Sparkles size={15} />}
+              {seeding ? "Loading…" : "Load samples"}
+            </button>
+            <button type="button" className="faq-btn primary" onClick={openCreate}>
+              <Plus size={16} /> Add FAQ
+            </button>
+          </div>
+        </header>
+
+        {/* TOOLBAR */}
+        <div className="faq-toolbar">
+          <div className="faq-search">
+            <Search size={16} />
+            <input
+              placeholder="Search questions or answers…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+          <button type="button" className="faq-btn outline" onClick={loadFaqs} disabled={loading}>
+            <RefreshCw size={14} className={loading ? "spin" : ""} /> Refresh
+          </button>
+          <span className="faq-count">{filtered.length} of {faqs.length} FAQs</span>
+        </div>
+
+        {/* LIST */}
+        <section className="faq-panel">
+          {loading ? (
+            <div className="faq-state"><Loader2 size={20} className="spin" /> Loading FAQs…</div>
+          ) : error ? (
+            <div className="faq-state error">
+              <AlertCircle size={18} />
+              <span>{error}</span>
+              <button type="button" className="faq-btn outline" onClick={loadFaqs}>Retry</button>
+            </div>
+          ) : filtered.length === 0 ? (
+            <div className="faq-empty">
+              <div className="faq-empty-icon"><HelpCircle size={26} /></div>
+              <h3>{faqs.length ? "No FAQs match your search" : "No FAQs yet"}</h3>
+              <p>
+                {faqs.length
+                  ? "Try a different search."
+                  : "Add your first FAQ, or click “Load samples” to add the default FAQs."}
+              </p>
+              {!faqs.length && (
+                <button type="button" className="faq-btn primary" onClick={openCreate}>
+                  <Plus size={15} /> Add FAQ
+                </button>
+              )}
+            </div>
+          ) : (
+            filtered.map((faq) => {
+              const id = faq._id || faq.id;
+              const open = openId === id;
+              return (
+                <article key={id} className="faq-row">
+                  <button type="button" className="faq-q" onClick={() => setOpenId(open ? null : id)}>
+                    <span className="faq-q-text">{faq.question}</span>
+                    {open ? <ChevronUp size={17} /> : <ChevronDown size={17} />}
+                  </button>
+                  {open && <div className="faq-a">{faq.answer}</div>}
+                  <div className="faq-actions">
+                    <button type="button" className="faq-icon" title="Edit" onClick={() => openEdit(faq)}>
+                      <Pencil size={14} />
+                    </button>
+                    <button type="button" className="faq-icon danger" title="Delete" onClick={() => setDeleteTarget(faq)}>
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </article>
+              );
+            })
+          )}
+        </section>
+      </div>
+
+      {/* ADD / EDIT MODAL */}
+      {showModal && (
+        <div className="faq-overlay" onMouseDown={(e) => e.target === e.currentTarget && !saving && setShowModal(false)}>
+          <form className="faq-modal" onSubmit={saveFaq}>
+            <div className="faq-modal-head">
+              <h2>{editing ? "Edit FAQ" : "Add FAQ"}</h2>
+              <button type="button" className="faq-icon" onClick={() => setShowModal(false)} disabled={saving}>
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="faq-modal-body">
+              <label className="faq-field">
+                <span>Question *</span>
+                <input
+                  value={form.question}
+                  onChange={(e) => setForm({ ...form, question: e.target.value })}
+                  placeholder="e.g. How do I create a task?"
+                  maxLength={300}
+                  autoFocus
+                />
+              </label>
+
+              <label className="faq-field">
+                <span>Answer *</span>
+                <textarea
+                  value={form.answer}
+                  onChange={(e) => setForm({ ...form, answer: e.target.value })}
+                  placeholder="Write a clear, short answer…"
+                  rows={6}
+                  maxLength={5000}
+                />
+              </label>
+
+              {formError && (
+                <div className="faq-alert"><AlertCircle size={15} /> {formError}</div>
+              )}
+            </div>
+
+            <div className="faq-modal-foot">
+              <button type="button" className="faq-btn outline" onClick={() => setShowModal(false)} disabled={saving}>
+                Cancel
+              </button>
+              <button type="submit" className="faq-btn primary" disabled={saving}>
+                {saving ? <Loader2 size={15} className="spin" /> : editing ? <Pencil size={15} /> : <Plus size={15} />}
+                {saving ? "Saving…" : editing ? "Save changes" : "Add FAQ"}
+              </button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {/* DELETE CONFIRM */}
+      {deleteTarget && (
+        <div className="faq-overlay" onMouseDown={(e) => e.target === e.currentTarget && !deleting && setDeleteTarget(null)}>
+          <div className="faq-modal small">
+            <div className="faq-del-icon"><Trash2 size={22} /></div>
+            <h2 className="faq-del-title">Delete this FAQ?</h2>
+            <p className="faq-del-text">“{deleteTarget.question}” will be removed from the Support page.</p>
+            <div className="faq-modal-foot center">
+              <button type="button" className="faq-btn outline" onClick={() => setDeleteTarget(null)} disabled={deleting}>
+                Cancel
+              </button>
+              <button type="button" className="faq-btn danger" onClick={confirmDelete} disabled={deleting}>
+                {deleting ? <Loader2 size={15} className="spin" /> : <Trash2 size={15} />}
+                {deleting ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toast && (
+        <div className={`faq-toast ${toast.type}`}>
+          {toast.type === "error" ? <AlertCircle size={15} /> : <CheckCircle2 size={15} />}
+          {toast.message}
+        </div>
+      )}
+    </div>
+  );
+};
+
+const css = `
+.faq-admin{min-height:calc(100vh - 100px);padding:28px;box-sizing:border-box;background:#f5f9fc;color:#183449;font-family:Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
+.faq-admin *{box-sizing:border-box}
+.faq-shell{max-width:1100px;margin:0 auto}
+.faq-hero{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;padding:28px 30px;margin-bottom:18px;border-radius:20px;color:#fff;background:var(--ts-hero, linear-gradient(120deg,#073b4c,#087f8c));box-shadow:var(--ts-hero-shadow, 0 18px 40px rgba(7,59,76,.18))}
+.faq-hero-left{display:flex;align-items:center;gap:14px}
+.faq-hero-icon{width:48px;height:48px;display:flex;align-items:center;justify-content:center;border-radius:13px;background:rgba(255,255,255,.14)}
+.faq-hero h1{margin:0;font-size:25px;font-weight:800}
+.faq-hero p{margin:6px 0 0;font-size:13px;color:rgba(255,255,255,.8)}
+.faq-hero-actions{display:flex;gap:9px;flex-wrap:wrap}
+.faq-btn{display:inline-flex;align-items:center;justify-content:center;gap:7px;min-height:40px;padding:0 15px;border-radius:10px;border:1px solid transparent;font-size:12.5px;font-weight:750;cursor:pointer;transition:.2s ease;font-family:inherit}
+.faq-btn:disabled{opacity:.6;cursor:not-allowed}
+.faq-btn.primary{background:linear-gradient(135deg,#16a6b8,#08798c);color:#fff;box-shadow:0 8px 20px rgba(22,166,184,.25)}
+.faq-btn.primary:hover:not(:disabled){transform:translateY(-1px)}
+.faq-btn.ghost{background:rgba(255,255,255,.12);color:#fff;border-color:rgba(255,255,255,.3)}
+.faq-btn.outline{background:#fff;color:#087f8c;border-color:#d5e7ee}
+.faq-btn.outline:hover:not(:disabled){background:#edf8f9}
+.faq-btn.danger{background:linear-gradient(135deg,#dc2626,#ef4444);color:#fff}
+.faq-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:12px;border-radius:14px;background:#fff;border:1px solid #e0e9ef}
+.faq-search{flex:1;min-width:220px;position:relative}
+.faq-search svg{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:#7b95a7}
+.faq-search input{width:100%;height:40px;padding:0 12px 0 38px;border:1px solid #dce7ed;border-radius:10px;outline:none;font-size:13px;background:#f8fbfc;font-family:inherit}
+.faq-search input:focus{border-color:#16a6b8;background:#fff}
+.faq-count{font-size:11.5px;color:#7b95a7;font-weight:600}
+.faq-panel{background:#fff;border:1px solid #e0e9ef;border-radius:16px;overflow:hidden}
+.faq-row{position:relative;border-bottom:1px solid #edf1f4;padding-right:88px}
+.faq-row:last-child{border-bottom:none}
+.faq-row.inactive{background:#fafbfc}
+.faq-row.inactive .faq-q-text{color:#94a7b4}
+.faq-q{width:100%;display:flex;align-items:center;gap:10px;padding:16px 18px;border:none;background:transparent;text-align:left;cursor:pointer;color:#28475b;font-size:13.5px;font-weight:700;font-family:inherit}
+.faq-q:hover{color:#087f8c}
+.faq-q-text{flex:1;min-width:0;overflow-wrap:anywhere}
+.faq-tags{display:flex;gap:5px;flex-shrink:0}
+.faq-tag{padding:3px 8px;border-radius:999px;background:#e6f7f7;color:#087f8c;font-size:10px;font-weight:800}
+.faq-tag.off{background:#f1f3f5;color:#7b8a96}
+.faq-a{padding:0 18px 16px;color:#5f7686;font-size:13px;line-height:1.75;white-space:pre-wrap}
+.faq-actions{position:absolute;top:11px;right:12px;display:flex;gap:6px}
+.faq-icon{width:32px;height:32px;display:flex;align-items:center;justify-content:center;border-radius:9px;border:1px solid #dfeaf0;background:#f9fcfd;color:#5f7d89;cursor:pointer}
+.faq-icon:hover{color:#087f8c;border-color:#a7dceb;background:#edfaff}
+.faq-icon.danger:hover{color:#dc2626;border-color:#fecaca;background:#fef2f2}
+.faq-state{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;padding:40px 20px;color:#7b909e;font-size:13px}
+.faq-state.error{color:#b83232}
+.faq-empty{padding:46px 20px;text-align:center}
+.faq-empty-icon{width:54px;height:54px;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;border-radius:16px;background:#e6f7f7;color:#087f8c}
+.faq-empty h3{margin:0;font-size:15px;color:#24455a}
+.faq-empty p{margin:6px 0 14px;font-size:12.5px;color:#7b909e}
+.faq-overlay{position:fixed;inset:0;z-index:1000;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(8,35,48,.6);backdrop-filter:blur(4px)}
+.faq-modal{width:100%;max-width:600px;max-height:calc(100vh - 36px);overflow-y:auto;border-radius:18px;background:#fff;box-shadow:0 25px 70px rgba(0,0,0,.22)}
+.faq-modal.small{max-width:420px;padding:26px 24px 20px;text-align:center}
+.faq-modal-head{display:flex;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid #e8eef1}
+.faq-modal-head h2{margin:0;font-size:17px}
+.faq-modal-body{padding:20px 22px;display:flex;flex-direction:column;gap:15px}
+.faq-field{display:flex;flex-direction:column;gap:6px}
+.faq-field span{font-size:11.5px;font-weight:800;color:#28475b}
+.faq-field input,.faq-field select,.faq-field textarea{width:100%;padding:10px 12px;border:1px solid #d8e5eb;border-radius:9px;outline:none;font-size:13px;font-family:inherit;color:#24455a;background:#fcfeff}
+.faq-field textarea{resize:vertical;min-height:120px}
+.faq-field input:focus,.faq-field select:focus,.faq-field textarea:focus{border-color:#16a6b8;box-shadow:0 0 0 3px rgba(22,166,184,.1)}
+.faq-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.faq-check{display:flex;align-items:center;gap:8px;font-size:12.5px;font-weight:600;color:#36566b;cursor:pointer}
+.faq-alert{display:flex;align-items:center;gap:8px;padding:10px 12px;border-radius:9px;background:#fff0ef;border:1px solid #f3d0cd;color:#ad332c;font-size:12px}
+.faq-modal-foot{display:flex;justify-content:flex-end;gap:10px;padding:14px 22px;border-top:1px solid #e8eef1}
+.faq-modal-foot.center{justify-content:center;border-top:none;padding-top:16px}
+.faq-del-icon{width:52px;height:52px;margin:0 auto 12px;display:flex;align-items:center;justify-content:center;border-radius:16px;background:#fef2f2;color:#dc2626}
+.faq-del-title{margin:0;font-size:16px}
+.faq-del-text{margin:8px 0 0;font-size:12.5px;color:#6b8b9b;overflow-wrap:anywhere}
+.faq-toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:1100;display:flex;align-items:center;gap:8px;max-width:min(560px,92vw);padding:12px 18px;border-radius:12px;color:#fff;font-size:12.5px;font-weight:700;background:linear-gradient(135deg,#063653,#087ea4);box-shadow:0 16px 40px rgba(3,55,76,.28)}
+.faq-toast.error{background:linear-gradient(135deg,#b91c1c,#ef4444)}
+.spin{animation:faqSpin .9s linear infinite}
+@keyframes faqSpin{to{transform:rotate(360deg)}}
+@media (max-width:640px){.faq-admin{padding:14px}.faq-hero{padding:20px}.faq-grid{grid-template-columns:1fr}.faq-row{padding-right:0;padding-bottom:44px}.faq-actions{top:auto;bottom:10px}}
+`;
+
+export default ManageFaqs;
