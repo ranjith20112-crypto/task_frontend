@@ -36,9 +36,10 @@ import {
 import MeetingMediaPanel from "./MeetingMediaPanel";
 
 /* ===================== API CONFIG ===================== */
-// FIX: the old fallback was ".onrender.comapi" (missing "/") and /api could be
-// missing. This always ends up as "https://task-backend-mn8a.onrender.com/api",
-// whether VITE_API_URL ends with "/api" or not.
+// FIX: the old fallback was "http://localhost:5000/api", which only works on
+// your own computer. This always ends up as
+// "https://task-backend-mn8a.onrender.com/api", whether VITE_API_URL
+// ends with "/api" or not.
 const API_BASE_URL =
   String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
     .trim()
@@ -93,7 +94,7 @@ const apiRequest = async (url, options = {}) => {
     });
   } catch (error) {
     console.error("Meeting API connection error:", error);
-    throw new Error("Cannot connect to the backend. Check that the server is running.");
+    throw new Error("Cannot reach the server. It may be waking up — please retry in a few seconds.");
   }
 
   const raw = await response.text();
@@ -273,6 +274,9 @@ const normalizeMeeting = (m) => {
     recordingFile: m.recordingFile || null,
     googleRecordingUrl: m.googleRecordingUrl || "",
     transcript: m.transcript || { source: "", entries: [] },
+    transcriptionLanguage: m.transcriptionLanguage || "en",
+    // Full attendee records (name / email / userId) — the transcript speaker picker uses them
+    attendees: Array.isArray(m.attendees) ? m.attendees.filter((a) => a && typeof a === "object" && a.name) : [],
     wantsMeet: m.meetingType ? m.meetingType !== "Offline" : true,
     status: m.status || "Scheduled",
     googleMeetLink: m.googleMeetLink || m.googleMeet || m.meetLink || m.meetingLink || "",
@@ -391,6 +395,17 @@ const MinutesOfMeeting = () => {
   const [deleting, setDeleting] = useState(null);
 
   const [search, setSearch] = useState("");
+
+  // Header search → open this page filtered (?search=… or the live "workspace-search" event)
+  useEffect(() => {
+    const fromUrl = new URLSearchParams(window.location.search).get("search");
+    if (fromUrl) setSearch(fromUrl);
+    const onSearch = (event) => {
+      if (event.detail?.path === window.location.pathname) setSearch(event.detail.query || "");
+    };
+    window.addEventListener("workspace-search", onSearch);
+    return () => window.removeEventListener("workspace-search", onSearch);
+  }, []);
   const [dateFilter, setDateFilter] = useState("All Time");
 
   const [viewMode, setViewMode] = useState("list");
@@ -619,7 +634,15 @@ const MinutesOfMeeting = () => {
       } else {
         await fetchMeetings();
       }
-      showToast("Meeting updated successfully");
+      // The Google Calendar event (guests, time) is updated with the meeting — same Meet link
+      const info = data.integration || {};
+      if (info.warning) {
+        showToast(`Meeting updated, but Google Calendar was not updated: ${info.warning}`, 10000);
+      } else if (info.invited?.length) {
+        showToast(`Meeting updated — Google invitation sent to ${info.invited.join(", ")} (same Meet link)`, 7000);
+      } else {
+        showToast("Meeting updated successfully");
+      }
       closeModal();
     } catch (error) {
       console.error("Error updating meeting:", error);
@@ -634,10 +657,10 @@ const MinutesOfMeeting = () => {
     if (!window.confirm("Are you sure you want to delete this meeting?")) return;
     setDeleting(id);
     try {
-      await apiRequest(`${API_URL}/${id}`, { method: "DELETE" });
+      const result = await apiRequest(`${API_URL}/${id}`, { method: "DELETE" });
       setMeetings((prev) => prev.filter((m) => getMeetingId(m) !== id));
       setExpandedMeeting(null);
-      showToast("Meeting deleted");
+      showToast(result?.warning ? `Meeting deleted, but ${result.warning}` : "Meeting deleted", result?.warning ? 10000 : undefined);
     } catch (error) {
       console.error("Error deleting meeting:", error);
       showToast("Failed to delete meeting: " + error.message);
