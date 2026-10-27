@@ -33,12 +33,15 @@ import {
    API CONFIG
    ========================================================= */
 
+// FIX: backend routes live under /api. This works whether VITE_API_URL
+// ends with "/api" or not — the result is ALWAYS "https://.../api".
 const API_BASE_URL =
-  import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com";
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
 
-const API_URL = API_BASE_URL.endsWith("/")
-  ? `${API_BASE_URL}taskbank`
-  : `${API_BASE_URL}/taskbank`;
+const API_URL = `${API_BASE_URL}/taskbank`;
 
 // Keep authentication consistent with the rest of the application.
 const getAuthToken = () => {
@@ -77,7 +80,8 @@ const clearAuthAndNotify = () => {
 const apiFetch = async (url, options = {}) => {
   const response = await fetch(url, {
     ...options,
-    credentials: "include",
+    // Bearer-token auth — cookies not needed (avoids CORS errors)
+    credentials: "omit",
     headers: {
       ...getAuthHeaders(Boolean(options.body)),
       ...(options.headers || {}),
@@ -492,8 +496,8 @@ const TaskBank = () => {
   const loadAssignOptions = async () => {
     if (assignOptionsLoaded) return;
     const [usersJson, deptJson] = await Promise.all([
-      apiFetch(`${API_BASE_URL.replace(/\/$/, "")}/users/assignable`),
-      apiFetch(`${API_BASE_URL.replace(/\/$/, "")}/departments`),
+      apiFetch(`${API_BASE_URL}/users/assignable`),
+      apiFetch(`${API_BASE_URL}/departments`),
     ]);
     setAssignUsers(
       extractList(usersJson).map((u) => ({
