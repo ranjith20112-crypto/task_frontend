@@ -1,9 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
-import { Bell, CheckCheck, MessageCircle, ClipboardCheck, LifeBuoy, AlertTriangle, RefreshCw } from "lucide-react";
+import { Bell, CheckCheck, MessageCircle, ClipboardCheck, LifeBuoy, AlertTriangle, RefreshCw, Volume2, VolumeX } from "lucide-react";
 import API from "../api/config";
 import { getSocket } from "../services/socket";
+import { isSoundEnabled, playNotificationSound, setSoundEnabled } from "../services/notificationSound";
 
 /* =========================================================
    Real-time notifications
@@ -87,9 +88,29 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
   const [permission, setPermission] = useState(
     typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported"
   );
+  const [soundOn, setSoundOn] = useState(isSoundEnabled);
+  const [ringing, setRinging] = useState(false);
+  const ringTimer = useRef(null);
   const wrapRef = useRef(null);
   const pathRef = useRef(location.pathname);
   pathRef.current = location.pathname;
+
+  // chime + shake the bell for a moment
+  const ring = useCallback((kind) => {
+    playNotificationSound(kind);
+    setRinging(true);
+    clearTimeout(ringTimer.current);
+    ringTimer.current = setTimeout(() => setRinging(false), 900);
+  }, []);
+
+  useEffect(() => () => clearTimeout(ringTimer.current), []);
+
+  const toggleSound = () => {
+    const next = !soundOn;
+    setSoundOn(next);
+    setSoundEnabled(next);
+    if (next) playNotificationSound("notification", { force: true }); // let them hear it
+  };
 
   const load = useCallback(async () => {
     try {
@@ -115,6 +136,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
       const body = textOf(n);
       const go = () => navigate(linkFor(n, getUser()?.role));
       const urgent = n.type === "task_overdue" || n.type === "task_reminder";
+      ring(urgent ? "urgent" : "notification");
       (urgent ? toast.warn : toast.info)(
         <div style={{ cursor: "pointer" }}>
           <strong style={{ display: "block", fontSize: 13 }}>{title}</strong>
@@ -131,6 +153,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
       const from = msg.sender?.name || "Someone";
       const text = String(msg.text || (msg.attachments?.length ? "📎 Attachment" : "New message")).slice(0, 140);
       const go = () => navigate("/dashboard/chats");
+      ring("chat");
       toast(
         <div style={{ cursor: "pointer" }}>
           <strong style={{ display: "block", fontSize: 13 }}>💬 {from}</strong>
@@ -149,7 +172,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
       socket.off("chat:message:new", onChatMessage);
       socket.off("connect", load);
     };
-  }, [load, navigate]);
+  }, [load, navigate, ring]);
 
   // close on outside click
   useEffect(() => {
@@ -197,6 +220,11 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
+      <style>{`
+        @keyframes bellRing { 0%,100% { transform: rotate(0); } 15% { transform: rotate(16deg); } 30% { transform: rotate(-14deg); } 45% { transform: rotate(10deg); } 60% { transform: rotate(-8deg); } 75% { transform: rotate(4deg); } }
+        .bell-ringing { animation: bellRing .9s ease-in-out; transform-origin: 50% 2px; }
+        @media (prefers-reduced-motion: reduce) { .bell-ringing { animation: none; } }
+      `}</style>
       <button
         type="button"
         className={buttonClassName}
@@ -204,7 +232,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <Bell size={17} strokeWidth={2} />
+        <Bell size={17} strokeWidth={2} className={ringing ? "bell-ringing" : undefined} />
         {unread > 0 && (
           <>
             <span style={styles.badge}>{unread > 99 ? "99+" : unread}</span>
@@ -217,9 +245,21 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
         <div style={styles.panel} role="dialog" aria-label="Notifications">
           <div style={styles.head}>
             <strong>Notifications</strong>
-            {unread > 0 && (
-              <button type="button" style={styles.link} onClick={markAll}>Mark all read</button>
-            )}
+            <span style={{ display: "flex", alignItems: "center", gap: 10 }}>
+              {unread > 0 && (
+                <button type="button" style={styles.link} onClick={markAll}>Mark all read</button>
+              )}
+              <button
+                type="button"
+                style={styles.sound}
+                onClick={toggleSound}
+                title={soundOn ? "Sound on — click to mute" : "Sound off — click to turn on"}
+                aria-label={soundOn ? "Mute notification sound" : "Turn on notification sound"}
+                aria-pressed={soundOn}
+              >
+                {soundOn ? <Volume2 size={15} /> : <VolumeX size={15} />}
+              </button>
+            </span>
           </div>
           {permission === "default" && (
             <button type="button" style={styles.enable} onClick={askDesktop}>
@@ -265,6 +305,7 @@ const styles = {
     background: "#fff", borderRadius: 16, border: "1px solid #D5E7EE", boxShadow: "0 24px 60px rgba(6,59,70,.18)", overflow: "hidden",
   },
   head: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid #EEF5F6", fontSize: 14, color: "#123B5D" },
+  sound: { border: "none", background: "transparent", color: "#0b8f87", cursor: "pointer", display: "flex", padding: 2 },
   link: { border: "none", background: "transparent", color: "#0b8f87", fontSize: 12, fontWeight: 700, cursor: "pointer" },
   enable: { width: "100%", border: "none", borderBottom: "1px solid #EEF5F6", background: "#FFFBF0", color: "#8a5a00", fontSize: 12, padding: "9px 14px", cursor: "pointer", textAlign: "left" },
   list: { maxHeight: 420, overflowY: "auto" },
