@@ -104,11 +104,13 @@ const Support = () => {
     try {
       let list = [];
       let firstError = null;
+      let anySucceeded = false;
 
       for (const url of [`${API_URL}/faqs`, `${API_BASE}/faqs`]) {
         try {
           const response = await fetch(url, { headers: getHeaders() });
           const data = await readResponse(response);
+          anySucceeded = true;
           list = toList(data);
           if (list.length) break;
         } catch (err) {
@@ -116,7 +118,8 @@ const Support = () => {
         }
       }
 
-      if (!list.length && firstError) throw firstError;
+      // Only show an error if NEITHER route worked; an empty list is not an error
+      if (!anySucceeded && firstError) throw firstError;
 
       // Hidden FAQs (isActive: false) are not shown to users
       setFaqs(
