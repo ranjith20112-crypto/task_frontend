@@ -20,10 +20,14 @@ import {
   Settings,
   UserRound,
   LogOut,
+  CheckSquare,
+  ClipboardList,
+  CornerDownLeft,
+  Loader2,
 } from "lucide-react";
 
 const API_URL = (
-  import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com"
+  import.meta.env.VITE_API_URL || "http://localhost:5000"
 ).replace(/\/+$/, "");
 
 const DashHeader = ({
@@ -39,6 +43,10 @@ const DashHeader = ({
   const [profileOpen, setProfileOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState({});
   const [unreadChatCount, setUnreadChatCount] = useState(0);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchData, setSearchData] = useState({ tasks: [], meetings: [], loaded: false });
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [activeResult, setActiveResult] = useState(0);
 
   const profileRef = useRef(null);
   const searchRef = useRef(null);
@@ -140,6 +148,7 @@ const DashHeader = ({
   }, [userName]);
 
   // Shared pages live under /dashboard for every role (the profile is a Settings tab)
+  const basePath = "/dashboard";
   const settingsPath = "/dashboard/settings";
   const profilePath = settingsPath;
 
@@ -164,6 +173,150 @@ const DashHeader = ({
 
     return links;
   }, [navLinks, canOpenSettings, settingsPath]);
+
+  // ------------------------------------------------------------
+  // WORKSPACE SEARCH — pages, tasks and meetings the user can see
+  //   GET /api/tasks     (already scoped to the user by the backend)
+  //   GET /api/meetings  (creator / attendees / admins only)
+  // Picking a task or meeting opens its page with ?search=<name>.
+  // ------------------------------------------------------------
+
+  const canSearch = (path) => finalNavLinks.some((link) => link.path === path);
+
+  const loadSearchData = async () => {
+    if (searchData.loaded || searchLoading) return;
+    const token = localStorage.getItem("token");
+    if (!token) return;
+
+    setSearchLoading(true);
+    const headers = { Authorization: `Bearer ${token}` };
+    const get = (path, allowed) =>
+      allowed
+        ? axios.get(`${API_URL}${path}`, { headers }).then((r) => (Array.isArray(r.data?.data) ? r.data.data : []))
+        : Promise.resolve([]);
+
+    const [tasks, meetings] = await Promise.allSettled([
+      get("/api/tasks", canSearch("/dashboard/tasks")),
+      get("/api/meetings", canSearch("/dashboard/mom")),
+    ]);
+
+    setSearchData({
+      tasks: tasks.status === "fulfilled" ? tasks.value : [],
+      meetings: meetings.status === "fulfilled" ? meetings.value : [],
+      loaded: true,
+    });
+    setSearchLoading(false);
+  };
+
+  const searchResults = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    const has = (...values) => values.some((v) => String(v || "").toLowerCase().includes(q));
+
+    if (!q) {
+      return finalNavLinks.slice(0, 6).map((link) => ({
+        key: `page-${link.path}`, kind: "page", title: link.label, subtitle: "Page", path: link.path, icon: link.icon,
+      }));
+    }
+
+    const pages = finalNavLinks
+      .filter((link) => has(link.label))
+      .map((link) => ({ key: `page-${link.path}`, kind: "page", title: link.label, subtitle: "Page", path: link.path, icon: link.icon }));
+
+    // one task assigned to several people shows once
+    const seenGroups = new Set();
+    const tasks = searchData.tasks
+      .filter((t) => has(t.name, t.referenceId, t.description, t.assignedUser, t.department))
+      .filter((t) => {
+        if (!t.taskGroupId) return true;
+        if (seenGroups.has(t.taskGroupId)) return false;
+        seenGroups.add(t.taskGroupId);
+        return true;
+      })
+      .slice(0, 6)
+      .map((t) => ({
+        key: `task-${t.id}`,
+        kind: "task",
+        title: t.name || "Untitled task",
+        subtitle: [t.status, t.dueDate && `Due ${t.dueDate}`, t.assignedUser].filter(Boolean).join(" · "),
+        path: "/dashboard/tasks",
+        query: t.name,
+        icon: CheckSquare,
+      }));
+
+    const meetings = searchData.meetings
+      .filter((m) => has(m.title, m.agenda, m.description, m.location))
+      .slice(0, 5)
+      .map((m) => ({
+        key: `meeting-${m._id}`,
+        kind: "meeting",
+        title: m.title || "Untitled meeting",
+        subtitle: [m.meetingDate && new Date(m.meetingDate).toLocaleDateString(), m.status].filter(Boolean).join(" · ") || "Meeting",
+        path: "/dashboard/mom",
+        query: m.title,
+        icon: ClipboardList,
+      }));
+
+    return [...pages, ...tasks, ...meetings];
+  }, [searchQuery, searchData, finalNavLinks]);
+
+  useEffect(() => setActiveResult(0), [searchQuery]);
+
+  const openSearch = () => {
+    setProfileOpen(false);
+    setSearchOpen(true);
+    loadSearchData();
+  };
+
+  const closeSearch = () => {
+    setSearchOpen(false);
+    setSearchQuery("");
+  };
+
+  const openResult = (result) => {
+    if (!result) return;
+    closeSearch();
+
+    if (!result.query) {
+      navigateTo(result.path);
+      return;
+    }
+
+    navigateTo(`${result.path}?search=${encodeURIComponent(result.query)}`);
+    // the page may already be open → tell it to apply the search
+    window.dispatchEvent(new CustomEvent("workspace-search", { detail: { path: result.path, query: result.query } }));
+  };
+
+  const handleSearchKeyDown = (event) => {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setActiveResult((i) => Math.min(i + 1, searchResults.length - 1));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveResult((i) => Math.max(i - 1, 0));
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      openResult(searchResults[activeResult]);
+    }
+  };
+
+  // Ctrl / ⌘ + K opens the search
+  useEffect(() => {
+    const onShortcut = (event) => {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        openSearch();
+      }
+    };
+    document.addEventListener("keydown", onShortcut);
+    return () => document.removeEventListener("keydown", onShortcut);
+  });
+
+  // fresh tasks / meetings next time the search opens
+  useEffect(() => {
+    const stale = () => setSearchData((d) => ({ ...d, loaded: false }));
+    window.addEventListener("realtime:notification", stale);
+    return () => window.removeEventListener("realtime:notification", stale);
+  }, []);
 
   // ------------------------------------------------------------
   // CHAT UNREAD COUNT + LIVE SOCKET.IO NOTIFICATIONS
@@ -303,6 +456,7 @@ const DashHeader = ({
         !searchRef.current.contains(event.target)
       ) {
         setSearchOpen(false);
+        setSearchQuery("");
       }
     };
 
@@ -320,6 +474,7 @@ const DashHeader = ({
       if (event.key === "Escape") {
         setProfileOpen(false);
         setSearchOpen(false);
+        setSearchQuery("");
       }
     };
 
@@ -371,8 +526,8 @@ const DashHeader = ({
     event.preventDefault();
     event.stopPropagation();
 
-    setProfileOpen(false);
-    setSearchOpen((previous) => !previous);
+    if (searchOpen) closeSearch();
+    else openSearch();
   };
 
   const handleMenuToggle = () => {
@@ -469,16 +624,60 @@ const DashHeader = ({
                 ref={searchRef}
               >
                 {searchOpen && (
-                  <div className="search-input-wrapper">
-                    <Search size={15} strokeWidth={2} />
-                    <input
-                      autoFocus
-                      type="text"
-                      placeholder="Search workspace..."
-                    />
-                    <span className="search-shortcut">
-                      <Command size={10} /> K
-                    </span>
+                  <div className="search-panel">
+                    <div className="search-input-wrapper">
+                      <Search size={15} strokeWidth={2} />
+                      <input
+                        autoFocus
+                        type="text"
+                        placeholder="Search pages, tasks, meetings..."
+                        value={searchQuery}
+                        onChange={(event) => setSearchQuery(event.target.value)}
+                        onKeyDown={handleSearchKeyDown}
+                        aria-label="Search workspace"
+                        aria-controls="workspace-search-results"
+                      />
+                      {searchLoading ? (
+                        <Loader2 size={14} className="search-spin" />
+                      ) : (
+                        <span className="search-shortcut">
+                          <Command size={10} /> K
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="search-results" id="workspace-search-results" role="listbox">
+                      {!searchQuery.trim() && <div className="search-group-label">Go to</div>}
+                      {searchResults.length === 0 ? (
+                        <div className="search-empty">
+                          {searchLoading ? "Searching..." : `No results for “${searchQuery.trim()}”`}
+                        </div>
+                      ) : (
+                        searchResults.map((result, index) => {
+                          const Icon = result.icon || Search;
+                          return (
+                            <button
+                              type="button"
+                              key={result.key}
+                              role="option"
+                              aria-selected={index === activeResult}
+                              className={`search-result ${index === activeResult ? "is-active" : ""}`}
+                              onMouseEnter={() => setActiveResult(index)}
+                              onClick={() => openResult(result)}
+                            >
+                              <span className={`search-result-icon kind-${result.kind}`}>
+                                <Icon size={14} />
+                              </span>
+                              <span className="search-result-text">
+                                <span className="search-result-title">{result.title}</span>
+                                <span className="search-result-sub">{result.subtitle}</span>
+                              </span>
+                              {index === activeResult && <CornerDownLeft size={13} className="search-enter" />}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
                   </div>
                 )}
 
@@ -879,23 +1078,47 @@ const DashHeader = ({
         }
 
         .search-wrapper { position: relative; z-index: 7000; }
-        .search-input-wrapper {
+        .search-panel {
           position: absolute;
           right: 0;
           top: 48px;
-          width: min(285px, calc(100vw - 32px));
-          height: 46px;
-          display: flex;
-          align-items: center;
-          gap: 9px;
-          padding: 0 12px;
+          width: min(380px, calc(100vw - 32px));
           border: 1px solid rgba(44,131,150,.18);
           border-radius: 12px;
           background: #fff;
           box-shadow: 0 18px 40px rgba(33,108,122,.16);
           z-index: 9000;
+          overflow: hidden;
           animation: searchDrop .2s ease-out;
         }
+        .search-input-wrapper {
+          height: 46px;
+          display: flex;
+          align-items: center;
+          gap: 9px;
+          padding: 0 12px;
+          border-bottom: 1px solid #EEF5F6;
+        }
+        .search-results { max-height: 360px; overflow-y: auto; padding: 6px; }
+        .search-group-label { padding: 6px 8px 4px; font-size: 10px; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; color: #8aa1ad; }
+        .search-empty { padding: 18px 10px; text-align: center; font-size: 12px; color: #6E8799; }
+        .search-result {
+          width: 100%; display: flex; align-items: center; gap: 10px; padding: 8px; border: 0; border-radius: 9px;
+          background: transparent; cursor: pointer; text-align: left;
+        }
+        .search-result.is-active { background: #EEF8F9; }
+        .search-result-icon {
+          width: 28px; height: 28px; flex-shrink: 0; border-radius: 8px; display: flex; align-items: center; justify-content: center;
+          background: #E8F7F8; color: #0b8f87;
+        }
+        .search-result-icon.kind-task { background: #EEF2FF; color: #4f46e5; }
+        .search-result-icon.kind-meeting { background: #FFF5E6; color: #b45309; }
+        .search-result-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+        .search-result-title { font-size: 12.5px; font-weight: 700; color: #123B5D; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .search-result-sub { font-size: 11px; color: #6E8799; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .search-enter { color: #8aa1ad; flex-shrink: 0; }
+        .search-spin { color: #63929d; flex-shrink: 0; animation: searchSpin 1s linear infinite; }
+        @keyframes searchSpin { to { transform: rotate(360deg); } }
 
         .search-input-wrapper svg { color: #63929d; flex-shrink: 0; }
         .search-input-wrapper input {
@@ -1322,7 +1545,7 @@ const DashHeader = ({
           .mobile-menu { top: 64px; max-height: calc(100vh - 64px); }
           .profile-info, .profile-chevron { display: none; }
           .profile-button { padding: 3px; }
-          .search-input-wrapper { position: fixed; top: 62px; left: 12px; right: 12px; width: auto; }
+          .search-panel { position: fixed; top: 62px; left: 12px; right: 12px; width: auto; }
         }
 
         @media (max-width: 430px) {
