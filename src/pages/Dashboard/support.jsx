@@ -15,9 +15,24 @@ import {
 } from "lucide-react";
 import SupportTicketThread from "./SupportTicketThread";
 
-const API_URL = "https://task-backend-mn8a.onrender.comapi/support";
+// FIX: the old address was ".onrender.comapi/support" (missing "/" before api).
+// This always ends up as "https://task-backend-mn8a.onrender.com/api/support",
+// whether VITE_API_URL ends with "/api" or not.
+const API_BASE =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
 
-const getToken = () => localStorage.getItem("token");
+const API_URL = `${API_BASE}/support`;
+
+const getToken = () =>
+  (
+    localStorage.getItem("token") ||
+    localStorage.getItem("authToken") ||
+    localStorage.getItem("accessToken") ||
+    ""
+  ).replace(/^"|"$/g, "");
 
 const Support = () => {
   const [search, setSearch] = useState("");
@@ -57,6 +72,12 @@ const Support = () => {
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok || data.success === false) {
+      if (response.status === 401) {
+        throw new Error("Session expired. Please log in again.");
+      }
+      if (response.status === 404) {
+        throw new Error(`Support route not found on the server (${response.url}).`);
+      }
       throw new Error(
         data.message || `Request failed (${response.status})`
       );
