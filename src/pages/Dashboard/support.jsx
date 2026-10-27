@@ -783,7 +783,7 @@ const Support = () => {
             </div>
           </div>
 
-          <div className="support-search-wrap">
+          {/* <div className="support-search-wrap">
             <Search className="support-search-icon" size={18} />
 
             <input
@@ -793,7 +793,7 @@ const Support = () => {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
             />
-          </div>
+          </div> */}
         </header>
 
         {/* FAQs */}
@@ -804,10 +804,10 @@ const Support = () => {
                 <HelpCircle size={20} />
               </div>
 
-              <div>
+              {/* <div>
                 <h2>Frequently Asked Questions</h2>
                 <p>Quick answers to common questions</p>
-              </div>
+              </div> */}
             </div>
           </div>
 
