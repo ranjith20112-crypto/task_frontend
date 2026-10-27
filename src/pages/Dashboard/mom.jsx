@@ -36,7 +36,14 @@ import {
 import MeetingMediaPanel from "./MeetingMediaPanel";
 
 /* ===================== API CONFIG ===================== */
-const API_BASE_URL = (import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.comapi").replace(/\/+$/, "");
+// FIX: the old fallback was ".onrender.comapi" (missing "/") and /api could be
+// missing. This always ends up as "https://task-backend-mn8a.onrender.com/api",
+// whether VITE_API_URL ends with "/api" or not.
+const API_BASE_URL =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
 const API_URL = API_BASE_URL + "/meetings";
 const DEPARTMENTS_URL = API_BASE_URL + "/departments";
 // Everyone in my organization (works for every role, not only admins)
@@ -77,7 +84,8 @@ const apiRequest = async (url, options = {}) => {
   try {
     response = await fetch(url, {
       ...options,
-      credentials: "include",
+      // Bearer-token auth — cookies not needed (avoids CORS errors)
+      credentials: "omit",
       headers: {
         ...getAuthHeaders(),
         ...(options.headers || {}),
