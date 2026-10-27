@@ -26,6 +26,10 @@ const API_BASE =
 
 const API_URL = `${API_BASE}/support`;
 
+// FAQ section switch: false = FAQ search + FAQ list are hidden and not loaded.
+// Change to true to show them again.
+const SHOW_FAQS = false;
+
 const getToken = () =>
   (
     localStorage.getItem("token") ||
@@ -132,7 +136,7 @@ const Support = () => {
   }, [getHeaders]);
 
   useEffect(() => {
-    fetchFaqs();
+    if (SHOW_FAQS) fetchFaqs();
     fetchTickets();
   }, [fetchFaqs, fetchTickets]);
 
@@ -783,88 +787,93 @@ const Support = () => {
             </div>
           </div>
 
-          {/* <div className="support-search-wrap">
-            <Search className="support-search-icon" size={18} />
+          {/* FAQ search — hidden while SHOW_FAQS is false */}
+          {SHOW_FAQS && (
+            <div className="support-search-wrap">
+              <Search className="support-search-icon" size={18} />
 
-            <input
-              className="support-search"
-              type="search"
-              placeholder="Search frequently asked questions..."
-              value={search}
-              onChange={(event) => setSearch(event.target.value)}
-            />
-          </div> */}
-        </header>
-
-        {/* FAQs */}
-        {/* <section className="support-panel">
-          <div className="support-panel-header">
-            <div className="support-panel-title">
-              <div className="support-title-icon">
-                <HelpCircle size={20} />
-              </div> */}
-
-              {/* <div>
-                <h2>Frequently Asked Questions</h2>
-                <p>Quick answers to common questions</p>
-              </div> */}
-            </div>
-          </div>
-
-          // {faqsLoading ? (
-          //   <div className="support-state">Loading FAQs...</div>
-          // ) : faqsError ? (
-          //   <div className="support-state support-error">
-          //     <p>{faqsError}</p>
-          //     <button
-          //       className="support-refresh-button"
-          //       onClick={fetchFaqs}
-          //     >
-          //       <RefreshCw size={14} />
-          //       Retry
-          //     </button>
-          //   </div>
-          // ) : filteredFaqs.length === 0 ? (
-          //   <div className="support-state">
-          //     No FAQs found. Try a different search.
-          //   </div>
-          ) : (
-            <div className="support-faq-list">
-              {filteredFaqs.map((faq, index) => {
-                const isOpen = openFaq === index;
-
-                return (
-                  <div
-                    className="support-faq-item"
-                    key={faq._id || faq.question || index}
-                  >
-                    <button
-                      type="button"
-                      className="support-faq-question"
-                      aria-expanded={isOpen}
-                      onClick={() =>
-                        setOpenFaq(isOpen ? null : index)
-                      }
-                    >
-                      <span>{faq.question}</span>
-                      {isOpen ? (
-                        <ChevronUp size={18} />
-                      ) : (
-                        <ChevronDown size={18} />
-                      )}
-                    </button>
-
-                    {isOpen && (
-                      <div className="support-faq-answer">
-                        {faq.answer}
-                      </div>
-                    )}
-                  </div>
-                );
-              })}
+              <input
+                className="support-search"
+                type="search"
+                placeholder="Search frequently asked questions..."
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+              />
             </div>
           )}
-        </section>
+        </header>
+
+        {/* FAQs — hidden while SHOW_FAQS is false */}
+        {SHOW_FAQS && (
+          <section className="support-panel">
+            <div className="support-panel-header">
+              <div className="support-panel-title">
+                <div className="support-title-icon">
+                  <HelpCircle size={20} />
+                </div>
+
+                <div>
+                  <h2>Frequently Asked Questions</h2>
+                  <p>Quick answers to common questions</p>
+                </div>
+              </div>
+            </div>
+
+            {faqsLoading ? (
+              <div className="support-state">Loading FAQs...</div>
+            ) : faqsError ? (
+              <div className="support-state support-error">
+                <p>{faqsError}</p>
+                <button
+                  className="support-refresh-button"
+                  onClick={fetchFaqs}
+                >
+                  <RefreshCw size={14} />
+                  Retry
+                </button>
+              </div>
+            ) : filteredFaqs.length === 0 ? (
+              <div className="support-state">
+                No FAQs found. Try a different search.
+              </div>
+            ) : (
+              <div className="support-faq-list">
+                {filteredFaqs.map((faq, index) => {
+                  const isOpen = openFaq === index;
+
+                  return (
+                    <div
+                      className="support-faq-item"
+                      key={faq._id || faq.question || index}
+                    >
+                      <button
+                        type="button"
+                        className="support-faq-question"
+                        aria-expanded={isOpen}
+                        onClick={() =>
+                          setOpenFaq(isOpen ? null : index)
+                        }
+                      >
+                        <span>{faq.question}</span>
+                        {isOpen ? (
+                          <ChevronUp size={18} />
+                        ) : (
+                          <ChevronDown size={18} />
+                        )}
+                      </button>
+
+                      {isOpen && (
+                        <div className="support-faq-answer">
+                          {faq.answer}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        )}
 
         {/* My Support Tickets */}
         <section className="support-panel">
