@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
+import AchievementsCard from "./AchievementsCard";
 import {
   Search, ChevronDown, ArrowUpRight, CheckCircle2,
   Clock3, AlertTriangle, Activity, Target, ListTodo, RotateCcw, Zap,
@@ -12,7 +13,8 @@ import {
    API / calculation logic preserved
 ========================================================= */
 
-// FIX: backend routes live under /api. This always ends up as
+// FIX: the old fallback was "http://localhost:5000/api", which only works on
+// your own computer. This always ends up as
 // "https://task-backend-mn8a.onrender.com/api", whether VITE_API_URL
 // ends with "/api" or not.
 const API_URL =
@@ -2558,6 +2560,8 @@ const DashboardPage = () => {
           </div>
 
         </section>
+
+        <AchievementsCard />
 
         <section className="ocean-card performance">
           <div className="ocean-card-header">
