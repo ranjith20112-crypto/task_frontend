@@ -6,10 +6,11 @@ import API from "../api/config";
 import { getSocket } from "../services/socket";
 import { isSoundEnabled, playNotificationSound, setSoundEnabled } from "../services/notificationSound";
 import Celebration from "./Celebration";
+import { enablePush, isPushActive, pushSupported, syncPush } from "../services/pushNotifications";
 
-// FIX: full backend address so notifications load no matter how
-// src/api/config.js sets its baseURL (with or without /api).
-// Axios ignores baseURL when the URL is absolute; the token interceptor still runs.
+const PROMPT_DISMISSED_KEY = "pushPromptDismissed";
+
+// Backend address (always ends with /api) — works whatever src/api/config.js contains
 const API_BASE =
   String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
     .trim()
@@ -84,6 +85,11 @@ const desktopNotify = (title, body, onClick) => {
   if (user?.preferences?.desktopNotifications === false) return; // Settings → Desktop notifications off
   if (!document.hidden) return; // the in-page toast is enough
   try {
+    if (isPushActive()) return; // the push notification (public/sw.js) shows it instead
+  } catch {
+    /* fall back to a normal desktop notification */
+  }
+  try {
     const n = new Notification(title, { body, tag: `${title}-${body}`.slice(0, 64) });
     n.onclick = () => {
       window.focus();
@@ -105,6 +111,13 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
     typeof window !== "undefined" && "Notification" in window ? Notification.permission : "unsupported"
   );
   const [soundOn, setSoundOn] = useState(isSoundEnabled);
+  const [promptHidden, setPromptHidden] = useState(() => {
+    try {
+      return localStorage.getItem(PROMPT_DISMISSED_KEY) === "1";
+    } catch {
+      return false;
+    }
+  });
   const [ringing, setRinging] = useState(false);
   const ringTimer = useRef(null);
   const wrapRef = useRef(null);
@@ -131,8 +144,8 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
   const load = useCallback(async () => {
     try {
       const res = await API.get(`${API_BASE}/notifications`, { params: { limit: 20 } });
-      setItems(res.data?.data || []);
-      setUnread(res.data?.unread || 0);
+      setItems(Array.isArray(res.data?.data) ? res.data.data : []);
+      setUnread(Number(res.data?.unread) || 0);
     } catch {
       /* bell stays usable */
     }
@@ -219,11 +232,30 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
     navigate(linkFor(n, getUser()?.role));
   };
 
+  // already allowed in this browser → make sure the server has the subscription
+  useEffect(() => {
+    try {
+      Promise.resolve(syncPush(getUser())).catch((err) =>
+        console.warn("Push sync skipped:", err?.message || err)
+      );
+    } catch (err) {
+      console.warn("Push sync skipped:", err?.message || err);
+    }
+  }, []);
+
   const askDesktop = async () => {
     if (!("Notification" in window)) return;
-    const result = await Notification.requestPermission();
-    setPermission(result);
+    let result;
+    try {
+      result = await enablePush();
+    } catch (err) {
+      console.error("enablePush failed:", err);
+      toast.error("Could not turn on push notifications. Please try again.");
+      return;
+    }
+    setPermission("Notification" in window ? Notification.permission : "unsupported");
     if (result === "granted") {
+      setPromptHidden(true);
       // keep Settings → "Desktop notifications" in sync
       try {
         await API.put(`${API_BASE}/auth/me/preferences`, { desktopNotifications: true });
@@ -232,12 +264,45 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
       } catch {
         /* permission still granted */
       }
+      toast.success("Push notifications are on for this browser.");
+    } else if (result === "denied") {
+      toast.info("Notifications are blocked. Allow them from the lock icon in the address bar.");
     }
   };
+
+  const dismissPrompt = () => {
+    setPromptHidden(true);
+    try {
+      localStorage.setItem(PROMPT_DISMISSED_KEY, "1");
+    } catch {
+      /* hidden for this visit */
+    }
+  };
+
+  let canPush = false;
+  try {
+    canPush = pushSupported();
+  } catch {
+    canPush = false;
+  }
+  const showPrompt = permission === "default" && !promptHidden && canPush;
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
       <Celebration />
+      {showPrompt && (
+        <div style={styles.prompt} role="dialog" aria-label="Enable push notifications">
+          <span style={styles.promptIcon}><Bell size={18} /></span>
+          <span style={{ flex: 1, minWidth: 0 }}>
+            <strong style={{ display: "block", fontSize: 13, color: "#123B5D" }}>Turn on push notifications?</strong>
+            <span style={{ fontSize: 12, color: "#5f7f8f" }}>Get tasks, reviews, support replies and chat messages even when the app is closed.</span>
+            <span style={{ display: "flex", gap: 8, marginTop: 10 }}>
+              <button type="button" style={styles.promptYes} onClick={askDesktop}>Enable</button>
+              <button type="button" style={styles.promptNo} onClick={dismissPrompt}>Not now</button>
+            </span>
+          </span>
+        </div>
+      )}
       <style>{`
         @keyframes bellRing { 0%,100% { transform: rotate(0); } 15% { transform: rotate(16deg); } 30% { transform: rotate(-14deg); } 45% { transform: rotate(10deg); } 60% { transform: rotate(-8deg); } 75% { transform: rotate(4deg); } }
         .bell-ringing { animation: bellRing .9s ease-in-out; transform-origin: 50% 2px; }
@@ -281,7 +346,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
           </div>
           {permission === "default" && (
             <button type="button" style={styles.enable} onClick={askDesktop}>
-              🔔 Turn on desktop alerts (when this tab is in the background)
+              🔔 Turn on push notifications (even when the app is closed)
             </button>
           )}
           <div style={styles.list}>
@@ -325,6 +390,10 @@ const styles = {
   head: { display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 14px", borderBottom: "1px solid #EEF5F6", fontSize: 14, color: "#123B5D" },
   sound: { border: "none", background: "transparent", color: "#0b8f87", cursor: "pointer", display: "flex", padding: 2 },
   link: { border: "none", background: "transparent", color: "#0b8f87", fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  prompt: { position: "fixed", right: 16, bottom: 16, zIndex: 12000, display: "flex", gap: 12, width: "min(360px, calc(100vw - 32px))", padding: 14, borderRadius: 16, background: "#fff", border: "1px solid #d5e7ee", boxShadow: "0 18px 44px rgba(18,59,93,.18)", textAlign: "left" },
+  promptIcon: { flexShrink: 0, width: 36, height: 36, borderRadius: 12, display: "flex", alignItems: "center", justifyContent: "center", background: "#E8F7F8", color: "#0b8f87" },
+  promptYes: { border: 0, borderRadius: 10, padding: "7px 14px", background: "linear-gradient(135deg,#16a6b8,#08798c)", color: "#fff", fontWeight: 800, fontSize: 12, cursor: "pointer" },
+  promptNo: { border: "1px solid #d5e7ee", borderRadius: 10, padding: "7px 14px", background: "#fff", color: "#5f7f8f", fontWeight: 700, fontSize: 12, cursor: "pointer" },
   enable: { width: "100%", border: "none", borderBottom: "1px solid #EEF5F6", background: "#FFFBF0", color: "#8a5a00", fontSize: 12, padding: "9px 14px", cursor: "pointer", textAlign: "left" },
   list: { maxHeight: 420, overflowY: "auto" },
   empty: { padding: 20, fontSize: 13, color: "#6E8799", textAlign: "center" },
