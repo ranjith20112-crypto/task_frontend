@@ -1,10 +1,20 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { toast } from "react-toastify";
-import { Bell, CheckCheck, MessageCircle, ClipboardCheck, LifeBuoy, AlertTriangle, RefreshCw, Volume2, VolumeX } from "lucide-react";
+import { Bell, CheckCheck, MessageCircle, ClipboardCheck, LifeBuoy, AlertTriangle, RefreshCw, Volume2, VolumeX, Award, RotateCcw, ListChecks } from "lucide-react";
 import API from "../api/config";
 import { getSocket } from "../services/socket";
 import { isSoundEnabled, playNotificationSound, setSoundEnabled } from "../services/notificationSound";
+import Celebration from "./Celebration";
+
+// FIX: full backend address so notifications load no matter how
+// src/api/config.js sets its baseURL (with or without /api).
+// Axios ignores baseURL when the URL is absolute; the token interceptor still runs.
+const API_BASE =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
 
 /* =========================================================
    Real-time notifications
@@ -18,6 +28,9 @@ const ICONS = {
   task_assigned: ClipboardCheck,
   task_reassigned: RefreshCw,
   task_status: CheckCheck,
+  task_completed: Award,
+  task_rework: RotateCcw,
+  task_subtask: ListChecks,
   task_reminder: AlertTriangle,
   task_overdue: AlertTriangle,
   support_ticket: LifeBuoy,
@@ -29,6 +42,9 @@ const TITLES = {
   task_assigned: "New task assigned",
   task_reassigned: "Task reassigned",
   task_status: "Task status updated",
+  task_completed: "Your task is completed 🎉",
+  task_rework: "Rework requested",
+  task_subtask: "New subtask assigned",
   task_reminder: "Task reminder",
   task_overdue: "Task deadline reached",
   support_ticket: "New support ticket",
@@ -114,9 +130,9 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
 
   const load = useCallback(async () => {
     try {
-      const res = await API.get("/api/notifications", { params: { limit: 20 } });
-      setItems(res.data.data || []);
-      setUnread(res.data.unread || 0);
+      const res = await API.get(`${API_BASE}/notifications`, { params: { limit: 20 } });
+      setItems(res.data?.data || []);
+      setUnread(res.data?.unread || 0);
     } catch {
       /* bell stays usable */
     }
@@ -135,8 +151,9 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
       const title = TITLES[n.type] || "Notification";
       const body = textOf(n);
       const go = () => navigate(linkFor(n, getUser()?.role));
-      const urgent = n.type === "task_overdue" || n.type === "task_reminder";
-      ring(urgent ? "urgent" : "notification");
+      const urgent = n.type === "task_overdue" || n.type === "task_reminder" || n.type === "task_rework";
+      // a completed task gets the "you win" fanfare instead (components/Celebration.jsx)
+      if (n.type !== "task_completed") ring(urgent ? "urgent" : "notification");
       (urgent ? toast.warn : toast.info)(
         <div style={{ cursor: "pointer" }}>
           <strong style={{ display: "block", fontSize: 13 }}>{title}</strong>
@@ -184,7 +201,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
 
   const markAll = async () => {
     try {
-      await API.patch("/api/notifications/read-all");
+      await API.patch(`${API_BASE}/notifications/read-all`);
       setItems((prev) => prev.map((n) => ({ ...n, read: true })));
       setUnread(0);
     } catch {
@@ -197,7 +214,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
     if (!n.read) {
       setItems((prev) => prev.map((x) => (x._id === n._id ? { ...x, read: true } : x)));
       setUnread((u) => Math.max(0, u - 1));
-      API.patch(`/api/notifications/${n._id}/read`).catch(() => {});
+      API.patch(`${API_BASE}/notifications/${n._id}/read`).catch(() => {});
     }
     navigate(linkFor(n, getUser()?.role));
   };
@@ -209,7 +226,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
     if (result === "granted") {
       // keep Settings → "Desktop notifications" in sync
       try {
-        await API.put("/api/auth/me/preferences", { desktopNotifications: true });
+        await API.put(`${API_BASE}/auth/me/preferences`, { desktopNotifications: true });
         const u = getUser();
         if (u) localStorage.setItem("user", JSON.stringify({ ...u, preferences: { ...(u.preferences || {}), desktopNotifications: true } }));
       } catch {
@@ -220,6 +237,7 @@ const NotificationBell = ({ buttonClassName = "header-action notification-button
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
+      <Celebration />
       <style>{`
         @keyframes bellRing { 0%,100% { transform: rotate(0); } 15% { transform: rotate(16deg); } 30% { transform: rotate(-14deg); } 45% { transform: rotate(10deg); } 60% { transform: rotate(-8deg); } 75% { transform: rotate(4deg); } }
         .bell-ringing { animation: bellRing .9s ease-in-out; transform-origin: 50% 2px; }
