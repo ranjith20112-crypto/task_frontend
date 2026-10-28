@@ -7,7 +7,14 @@
   </head>
 
   <body>
-    <div id="root"></div>
+    <!-- splash until React mounts (React replaces it) -->
+    <div id="root">
+      <div style="position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;background:linear-gradient(135deg,#edfafd,#f7fbfd 44%,#eef8fa);font-family:system-ui,sans-serif;color:#6e8799;font-size:13px;font-weight:700">
+        <div style="width:46px;height:46px;border-radius:50%;border:4px solid #d5e7ee;border-top-color:#16a6b8;animation:bootSpin .9s linear infinite"></div>
+        Loading…
+        <style>@keyframes bootSpin{to{transform:rotate(360deg)}}</style>
+      </div>
+    </div>
 
     <script type="module" src="/src/main.jsx"></script>
   </body>
