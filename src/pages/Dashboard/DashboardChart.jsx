@@ -36,12 +36,10 @@ import {
   ChevronDown,
   Building2,
   MessageSquare,
+  Timer,
 } from "lucide-react";
 
-// FIX: the old API address was ".onrender.comapi" (missing "/") and the socket
-// pointed to localhost:5000, which never works on the live site.
-// BACKEND_ORIGIN = server address WITHOUT /api (used by the socket)
-// API_URL        = server address WITH /api (used by chat requests)
+// Backend origin WITHOUT /api (Render). REST calls use /api, the socket uses the bare origin.
 const BACKEND_ORIGIN = String(
   import.meta.env.VITE_SOCKET_URL ||
     import.meta.env.VITE_API_URL ||
@@ -124,21 +122,22 @@ const getCurrentUserId = () => {
 
 const API = axios.create({
   baseURL: API_URL,
-  // Bearer-token auth — cookies not needed (avoids CORS errors)
-  withCredentials: false,
+  withCredentials: false, // auth uses the Bearer token, not cookies
   headers: { "Content-Type": "application/json" },
 });
 
 API.interceptors.request.use(
   (config) => {
-    // Safety net: "/api/chat/..." and "/chat/..." both become .../api/chat/...
-    if (config.url?.startsWith("/api/")) config.url = config.url.slice(4);
-
     const token = getAuthToken();
 
     if (token) {
       config.headers = config.headers || {};
       config.headers.Authorization = `Bearer ${token}`;
+    }
+
+    // safety net: never send /api/api/...
+    if (typeof config.url === "string" && config.url.startsWith("/api/")) {
+      config.url = config.url.slice(4);
     }
 
     return config;
@@ -217,11 +216,11 @@ const getErrorMessage = (error) => {
   }
 
   if (status === 500) {
-    return message || "Server error. Check your backend terminal.";
+    return message || "Server error. Please try again.";
   }
 
   if (!error?.response) {
-    return `Cannot connect to the chat server (${BACKEND_ORIGIN}). Please try again.`;
+    return "Cannot reach the server (it may be waking up). Please try again in a few seconds.";
   }
 
   return message || error.message || "Something went wrong.";
@@ -273,6 +272,21 @@ const getUnreadCount = (conversation) =>
     ) || 0
   );
 
+// Disappearing messages (same values as the backend's DISAPPEAR_OPTIONS)
+const DISAPPEAR_OPTIONS = [
+  { seconds: 0, label: "Off" },
+  { seconds: 3600, label: "1 hour" },
+  { seconds: 86400, label: "24 hours" },
+  { seconds: 604800, label: "7 days" },
+  { seconds: 7776000, label: "90 days" },
+];
+
+const disappearLabel = (seconds) =>
+  DISAPPEAR_OPTIONS.find((o) => o.seconds === Number(seconds || 0))?.label || "Off";
+
+const isExpired = (message, now) =>
+  Boolean(message?.expiresAt) && new Date(message.expiresAt).getTime() <= now;
+
 const isDepartmentConversation = (conversation) =>
   conversation?.type === "department" || conversation?.type === "group";
 
@@ -308,6 +322,8 @@ export default function Chats() {
   const [error, setError] = useState("");
   const [messageError, setMessageError] = useState("");
   const [soundEnabled, setSoundEnabled] = useState(true);
+  const [savingDisappear, setSavingDisappear] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
 
   const soundEnabledRef = useRef(true);
   const audioContextRef = useRef(null);
@@ -626,6 +642,58 @@ export default function Chats() {
   );
 
   const activeChatName = getConversationName(activeChat);
+
+  // re-check every 15 s so disappearing messages vanish on time without a reload
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => !isExpired(message, now)),
+    [messages, now]
+  );
+
+  const disappearAfter = Number(activeChat?.disappearAfter || 0);
+
+  // Same rule as the backend: private → either person, group → group admins / Admin, department → Admin / Manager
+  const canChangeDisappear = useMemo(() => {
+    if (!activeChat || !canSend) return false;
+    const role = getStoredUser()?.role;
+    if (activeChat.type === "group") {
+      return (
+        role === "SuperAdmin" ||
+        getId(activeChat.admin_id) === String(currentUserId) ||
+        (activeChat.groupAdmins || []).map(getId).includes(String(currentUserId))
+      );
+    }
+    if (activeChat.type === "department") return ["SuperAdmin", "Admin", "Manager"].includes(role);
+    return true;
+  }, [activeChat, canSend, currentUserId]);
+
+  const changeDisappearing = async (seconds) => {
+    const id = getId(activeChat);
+    if (!id || seconds === disappearAfter) return;
+    setSavingDisappear(true);
+    setMessageError("");
+    try {
+      const response = await API.put(`/chat/${id}/disappearing`, { seconds });
+      const note = response.data?.message;
+      setConversations((prev) =>
+        prev.map((c) =>
+          getId(c) === id
+            ? { ...c, disappearAfter: seconds, ...(note ? { lastMessage: note, lastMessageAt: note.createdAt } : {}) }
+            : c
+        )
+      );
+      setSelectedConversation((prev) => (prev && getId(prev) === id ? { ...prev, disappearAfter: seconds } : prev));
+      if (note) setMessages((prev) => (prev.some((m) => getId(m) === getId(note)) ? prev : [...prev, note]));
+    } catch (err) {
+      setMessageError(getErrorMessage(err));
+    } finally {
+      setSavingDisappear(false);
+    }
+  };
 
   useEffect(() => {
     selectedConversationRef.current = activeChat;
@@ -972,10 +1040,10 @@ export default function Chats() {
       auth: { token },
       withCredentials: false,
       transports: ["websocket", "polling"],
-      // Render free tier sleeps — keep retrying while it wakes up
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 2000,
+      reconnectionDelayMax: 10000,
       timeout: 20000,
     });
 
@@ -1260,6 +1328,15 @@ export default function Chats() {
         .info-section{padding:17px 0;border-bottom:1px solid #dcebef}
         .info-section-title{color:#8ca0ad;font-size:9px;font-weight:800;letter-spacing:.1em;text-transform:uppercase}
         .info-item{margin-top:12px;color:#557184;font-size:11px}
+        .disappear-chip{display:inline-flex;align-items:center;gap:3px;margin-left:8px;padding:1px 7px;border-radius:999px;background:#E8F7F8;color:#0b8f87;font-size:10px;font-weight:700;vertical-align:middle}
+        .disappear-help{margin:8px 0 0;color:#7a909c;font-size:10.5px;line-height:1.5}
+        .disappear-options{display:flex;flex-direction:column;gap:4px;margin-top:10px}
+        .disappear-option{display:flex;align-items:center;gap:8px;padding:7px 9px;border:1px solid #dcebef;border-radius:9px;background:#fff;color:#38546a;font-size:11.5px;cursor:pointer}
+        .disappear-option.selected{border-color:#74cbd0;background:#EEF8F9;color:#0b6f6a;font-weight:700}
+        .disappear-option.disabled{cursor:not-allowed;opacity:.65}
+        .disappear-option input{accent-color:#0f9b91;margin:0}
+        .system-note{display:flex;justify-content:center;margin:4px 0 16px}
+        .system-note span{display:inline-flex;align-items:center;gap:6px;max-width:85%;padding:6px 12px;border-radius:10px;background:#FFF8E6;color:#8a5a00;font-size:11px;line-height:1.5;text-align:center}
         .status-message{display:flex;align-items:flex-start;gap:8px;margin:12px 18px 0;padding:10px 12px;border-radius:10px;background:#fff7ed;color:#9a3412;font-size:12px;line-height:1.5;overflow-wrap:anywhere}
         .status-message.error{background:#fef2f2;color:#b91c1c}
         .loading-state{padding:35px 15px;color:#7b93a2;text-align:center;font-size:12px}
@@ -1499,11 +1576,29 @@ export default function Chats() {
                         : isDepartmentConversation(activeChat)
                         ? "Department conversation · Members can participate"
                         : "Private conversation"}
+                      {disappearAfter > 0 && (
+                        <span className="disappear-chip" title="New messages disappear after this time">
+                          <Timer size={11} /> {disappearLabel(disappearAfter)}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
 
                 <div className="conversation-actions">
+                  <button
+                    className={`icon-button ${disappearAfter > 0 ? "sound-enabled" : ""}`}
+                    title={
+                      disappearAfter > 0
+                        ? `Disappearing messages: ${disappearLabel(disappearAfter)}`
+                        : "Disappearing messages: Off"
+                    }
+                    aria-label="Disappearing messages settings"
+                    onClick={() => setShowInfo(true)}
+                  >
+                    <Timer size={16} />
+                  </button>
+
                   <button
                     className={`icon-button ${
                       soundEnabled ? "sound-enabled" : "sound-muted"
@@ -1565,12 +1660,19 @@ export default function Chats() {
 
                 {messagesLoading ? (
                   <div className="loading-state">Loading messages...</div>
-                ) : messages.length === 0 ? (
+                ) : visibleMessages.length === 0 ? (
                   <div className="loading-state">
                     No messages in this conversation yet.
                   </div>
                 ) : (
-                  messages.map((message, index) => {
+                  visibleMessages.map((message, index) => {
+                    if (message.system) {
+                      return (
+                        <div key={getId(message) || `system-${index}`} className="system-note">
+                          <span><Timer size={12} /> {message.text}</span>
+                        </div>
+                      );
+                    }
                     const senderId = getMessageSenderId(message);
                     const mine =
                       Boolean(currentUserId) && senderId === currentUserId;
@@ -1604,6 +1706,9 @@ export default function Chats() {
                             />
                           </div>
                           <div className="message-meta">
+                            {message.expiresAt && (
+                              <Timer size={10} aria-label="Disappearing message" />
+                            )}
                             <span>{getTime(message.createdAt)}</span>
                             {mine && <CheckCheck size={12} />}
                           </div>
@@ -1698,6 +1803,41 @@ export default function Chats() {
                   ? "Department conversation"
                   : "Private conversation"}
               </p>
+            </div>
+
+            <div className="info-section">
+              <div className="info-section-title">Disappearing messages</div>
+              <p className="disappear-help">
+                When on, new messages are deleted for everyone after the chosen time. Messages already sent are not affected.
+              </p>
+              <div className="disappear-options" role="radiogroup" aria-label="Disappearing messages">
+                {DISAPPEAR_OPTIONS.map((option) => (
+                  <label
+                    key={option.seconds}
+                    className={`disappear-option ${disappearAfter === option.seconds ? "selected" : ""} ${
+                      !canChangeDisappear || savingDisappear ? "disabled" : ""
+                    }`}
+                  >
+                    <input
+                      type="radio"
+                      name="disappear"
+                      checked={disappearAfter === option.seconds}
+                      disabled={!canChangeDisappear || savingDisappear}
+                      onChange={() => changeDisappearing(option.seconds)}
+                    />
+                    {option.label}
+                  </label>
+                ))}
+              </div>
+              {!canChangeDisappear && (
+                <p className="disappear-help">
+                  {activeChat.type === "group"
+                    ? "Only group admins can change this."
+                    : activeChat.type === "department"
+                    ? "Only an Admin or Manager can change this."
+                    : "You don't have permission to change this."}
+                </p>
+              )}
             </div>
 
             {activeChat.type === "group" && (
