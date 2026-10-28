@@ -1,5 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import API from "../../api/config";
+import { hasPermission } from "../../services/permissions";
+import ChatFileBackup from "./ChatFileBackup";
 import {
   UserRound,
   ShieldCheck,
@@ -29,10 +31,36 @@ import {
   Zap,
   CalendarDays,
   X,
+  Archive,
 } from "lucide-react";
+
+// Backend address (always ends with /api) — works whatever src/api/config.js contains
+const API_BASE =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
+
+const errorText = (error, fallback) => {
+  const status = error?.response?.status;
+  const msg = error?.response?.data?.message || error?.response?.data?.error;
+  if (msg) return msg;
+  if (status === 401) return "Session expired. Please log in again.";
+  if (status === 403) return "You don't have permission for this action.";
+  if (status === 404) return "Settings route not found on the server.";
+  if (!error?.response) return "Cannot reach the server (it may be waking up). Try again in a few seconds.";
+  return fallback;
+};
 
 const Settings = () => {
   const [activeTab, setActiveTab] = useState("profile");
+  const canSeeChatBackup = useMemo(() => {
+    try {
+      return hasPermission(JSON.parse(localStorage.getItem("user") || "null"), "chat", "view");
+    } catch {
+      return false;
+    }
+  }, []);
 
   // Loaded from GET /api/auth/me — never hardcoded
   const [profile, setProfile] = useState({
@@ -106,10 +134,10 @@ const Settings = () => {
     setLoadingProfile(true);
     setLoadError("");
     try {
-      const response = await API.get("/api/auth/me");
+      const response = await API.get(`${API_BASE}/auth/me`);
       applyServerData(response.data?.data || {});
     } catch (error) {
-      setLoadError(error.response?.data?.message || "Failed to load your settings.");
+      setLoadError(errorText(error, "Failed to load your settings."));
     } finally {
       setLoadingProfile(false);
     }
@@ -165,13 +193,13 @@ const Settings = () => {
     setSavingProfile(true);
     try {
       const [profileRes] = await Promise.all([
-        API.put("/api/auth/me", {
+        API.put(`${API_BASE}/auth/me`, {
           name: profile.fullName.trim(),
           phone: profile.phone.trim(),
           bio: profile.bio,
           ...(canEditOwnDepartment ? { department: profile.department } : {}),
         }),
-        API.put("/api/auth/me/preferences", {
+        API.put(`${API_BASE}/auth/me/preferences`, {
           ...preferences,
           aiProvider,
           language,
@@ -198,7 +226,7 @@ const Settings = () => {
         setSaved(false);
       }, 2500);
     } catch (error) {
-      showToast(error.response?.data?.message || "Failed to save your settings");
+      showToast(errorText(error, "Failed to save your settings"));
     } finally {
       setSavingProfile(false);
     }
@@ -228,7 +256,7 @@ const Settings = () => {
     if (savingPassword) return;
     setSavingPassword(true);
     try {
-      await API.put("/api/auth/change-password", {
+      await API.put(`${API_BASE}/auth/change-password`, {
         currentPassword: security.currentPassword,
         newPassword: security.newPassword,
       });
@@ -239,7 +267,7 @@ const Settings = () => {
         confirmPassword: "",
       });
     } catch (error) {
-      showToast(error.response?.data?.message || "Failed to update password");
+      showToast(errorText(error, "Failed to update password"));
     } finally {
       setSavingPassword(false);
     }
@@ -1319,6 +1347,19 @@ const Settings = () => {
                 <span className="tab-arrow">›</span>
               </button>
 
+              {canSeeChatBackup && (
+                <button
+                  className={`tab-button ${activeTab === "backup" ? "active" : ""}`}
+                  onClick={() => setActiveTab("backup")}
+                >
+                  <span className="tab-icon">
+                    <Archive size={18} />
+                  </span>
+                  <span className="tab-text">Chat file backup</span>
+                  <span className="tab-arrow">›</span>
+                </button>
+              )}
+
               {/* <button
                 className={`tab-button ${
                   activeTab === "subscription" ? "active" : ""
@@ -1393,7 +1434,7 @@ const Settings = () => {
                       <div className="profile-tags">
                         <span className="tag tag-ocean">
                           <CheckCircle2 size={11} />
-                          Administrator
+                          {role || "Member"}
                         </span>
 
                         <span className="tag tag-blue">
@@ -1917,6 +1958,9 @@ const Settings = () => {
                 </section>
               </>
             )}
+
+            {/* CHAT FILE BACKUP */}
+            {activeTab === "backup" && canSeeChatBackup && <ChatFileBackup />}
 
             {/* SUBSCRIPTION */}
             {activeTab === "subscription" && (
