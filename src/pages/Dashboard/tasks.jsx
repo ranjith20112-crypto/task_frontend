@@ -46,6 +46,7 @@ import {
   Download,
   UploadCloud,
   Upload,
+  BadgeCheck,
 } from "lucide-react";
 
 /* =========================================================
@@ -299,6 +300,9 @@ const normalizeTask = (t) => ({
     typeof t?.assignedBy === "object"
       ? t?.assignedBy?._id || ""
       : t?.assignedBy || "",
+
+  reworkCount: Number(t?.reworkCount) || 0,
+  reviewScore: Number(t?.reviewScore) || null,
 
   dueTime: t?.dueTime || "",
 
@@ -819,6 +823,183 @@ const TASK_STATUSES = [
   "Review",
   "Completed",
 ];
+
+// Review flow (same rules as the backend):
+//   only the person who ASSIGNED a task can mark it Completed — once it's in Review —
+//   or send it back for rework; only they can reopen a Completed task.
+//   No assigner (old / imported tasks) → Admin / Manager.
+const reviewRoleOf = (task) => {
+  const me = getSessionUser();
+  const myId = String(me?._id || me?.id || "");
+  const isAssigner = task?.assignedBy
+    ? String(task.assignedBy) === myId
+    : ["Admin", "SuperAdmin", "Manager"].includes(me?.role);
+  const selfAssigned =
+    Boolean(task?.assignedBy) && String(task.assignedBy) === String(task.assignedTo);
+  return {
+    isAssigner,
+    selfAssigned,
+    canReview: isAssigner && !selfAssigned && normalizeStatus(task?.status) === "Review",
+  };
+};
+
+const statusOptionDisabled = (task, option) => {
+  const { isAssigner, selfAssigned } = reviewRoleOf(task);
+  const current = normalizeStatus(task?.status);
+  if (option === current) return false;
+  if (option === "Completed") return !isAssigner || (current !== "Review" && !selfAssigned);
+  if (current === "Completed") return !isAssigner;
+  return false;
+};
+
+const statusOptionLabel = (task, option) =>
+  option === "Completed" && statusOptionDisabled(task, option)
+    ? reviewRoleOf(task).isAssigner
+      ? "Completed (move to Review first)"
+      : "Completed (assigner approves)"
+    : option;
+
+// Approve → the assigner gives a score 1–10 (quick picks 6 / 8 / 10); it becomes the assignee's points
+const SCORE_LABELS = { 1: "Poor", 2: "Poor", 3: "Weak", 4: "Weak", 5: "Okay", 6: "Good", 7: "Good", 8: "Very good", 9: "Excellent", 10: "Perfect" };
+
+const ScoreDialog = ({ task, busy, onCancel, onSubmit }) => {
+  const [score, setScore] = useState(8);
+  useEffect(() => {
+    const onKey = (e) => e.key === "Escape" && !busy && onCancel();
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [busy, onCancel]);
+
+  return createPortal(
+    <div style={styles.scoreOverlay} onClick={() => !busy && onCancel()}>
+      <div style={styles.scoreModal} role="dialog" aria-modal="true" aria-label="Give a score" onClick={(e) => e.stopPropagation()}>
+        <div style={{ fontSize: 34, lineHeight: 1 }}>⭐</div>
+        <h3 style={{ margin: "8px 0 4px", fontSize: 18, color: colors.text }}>Give a score</h3>
+        <p style={{ margin: 0, fontSize: 12.5, color: colors.muted }}>
+          “{task.name}” · {task.assignedUser || "the assignee"} earns this many points
+        </p>
+
+        <div style={styles.scoreQuick}>
+          {[6, 8, 10].map((n) => (
+            <button
+              key={n}
+              type="button"
+              onClick={() => setScore(n)}
+              style={{ ...styles.scoreQuickBtn, ...(score === n ? styles.scoreQuickActive : {}) }}
+              aria-pressed={score === n}
+            >
+              <strong style={{ fontSize: 22 }}>{n}</strong>
+              <span style={{ fontSize: 10.5 }}>{SCORE_LABELS[n]}</span>
+            </button>
+          ))}
+        </div>
+
+        <div style={styles.scoreAll} role="radiogroup" aria-label="Score from 1 to 10">
+          {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
+            <button
+              key={n}
+              type="button"
+              role="radio"
+              aria-checked={score === n}
+              onClick={() => setScore(n)}
+              style={{ ...styles.scoreDot, ...(score === n ? styles.scoreDotActive : {}) }}
+            >
+              {n}
+            </button>
+          ))}
+        </div>
+
+        <div style={{ margin: "12px 0 16px", fontSize: 13, color: colors.text }}>
+          <strong style={{ fontSize: 26, color: "#0b8f87" }}>{score}</strong>/10 · {SCORE_LABELS[score]} · +{score} points
+        </div>
+
+        <div style={{ display: "flex", gap: 8, justifyContent: "center" }}>
+          <button type="button" onClick={onCancel} disabled={busy} style={{ ...styles.reviewButton, color: colors.muted, background: "#fff", borderColor: colors.border, height: 38, padding: "0 16px" }}>
+            Cancel
+          </button>
+          <button type="button" onClick={() => onSubmit(score)} disabled={busy} style={{ ...styles.reviewButton, ...styles.reviewApprove, height: 38, padding: "0 18px", opacity: busy ? 0.6 : 1 }}>
+            <BadgeCheck size={15} /> {busy ? "Saving..." : `Approve with ${score}/10`}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+};
+
+// Under a task card: review buttons for the assigner, "waiting for review" for the assignee,
+// and the last rework reason while the task is being reworked
+const ReviewInfo = ({ task, onReview, busy }) => {
+  const role = reviewRoleOf(task);
+  const status = normalizeStatus(task.status);
+  const last = task.statusHistory?.[task.statusHistory.length - 1];
+  const reworkNote = last?.note && /^Rework requested/.test(last.note) && status !== "Completed" && status !== "Review" ? last.note : "";
+
+  if (role.canReview && onReview) {
+    return (
+      <div style={{ padding: "0 16px 14px" }}>
+        <div style={{ ...styles.reviewNote, background: "#EEF6FF", color: "#1d4ed8", marginTop: 0 }}>
+          <Eye size={13} /> {task.assignedUser || "The assignee"} finished this task — review it and approve or send it back.
+        </div>
+        <ReviewActions task={task} onReview={onReview} busy={busy} />
+      </div>
+    );
+  }
+  if (status === "Review" && !role.isAssigner) {
+    return (
+      <div style={{ padding: "0 16px 14px" }}>
+        <div style={{ ...styles.reviewNote, background: "#F5F3FF", color: "#6d28d9", marginTop: 0 }}>
+          <Clock3 size={13} /> Waiting for {task.assignedByName || "the person who assigned it"} to review and mark it completed.
+        </div>
+      </div>
+    );
+  }
+  if (status === "Completed" && task.reviewScore) {
+    return (
+      <div style={{ padding: "0 16px 14px" }}>
+        <div style={{ ...styles.reviewNote, background: "#EAF8F1", color: "#17724A", marginTop: 0 }}>
+          <BadgeCheck size={13} /> Scored <strong>{task.reviewScore}/10</strong>
+          {task.assignedByName ? ` by ${task.assignedByName}` : ""} · +{task.reviewScore} points
+        </div>
+      </div>
+    );
+  }
+  if (reworkNote) {
+    return (
+      <div style={{ padding: "0 16px 14px" }}>
+        <div style={{ ...styles.reviewNote, background: "#FFF8EB", color: "#b45309", marginTop: 0 }}>
+          <RotateCcw size={13} /> {reworkNote}
+          {task.reworkCount > 1 ? ` (rework #${task.reworkCount})` : ""}
+        </div>
+      </div>
+    );
+  }
+  return null;
+};
+
+// "Approve & complete" / "Rework" buttons for the assigner of a task in Review
+const ReviewActions = ({ task, onReview, busy, compact = false }) => (
+  <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: compact ? 0 : 10 }}>
+    <button
+      type="button"
+      onClick={() => onReview(task, "complete")}
+      disabled={busy}
+      style={{ ...styles.reviewButton, ...styles.reviewApprove, opacity: busy ? 0.6 : 1 }}
+      title={`Approve, give a score 1–10 and mark completed — ${task.assignedUser || "the assignee"} earns that many points`}
+    >
+      <BadgeCheck size={13} /> {compact ? "Approve" : "Approve & complete"}
+    </button>
+    <button
+      type="button"
+      onClick={() => onReview(task, "rework")}
+      disabled={busy}
+      style={{ ...styles.reviewButton, ...styles.reviewRework, opacity: busy ? 0.6 : 1 }}
+      title="Send back to the assignee for rework"
+    >
+      <RotateCcw size={13} /> Rework
+    </button>
+  </div>
+);
 
 const priorityConfig = {
   Low: {
@@ -2150,6 +2331,95 @@ const styles = {
     gap: 8,
   },
 
+  groupMainTask: {
+    display: "flex",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: 6,
+    marginBottom: 10,
+    padding: "8px 10px",
+    borderRadius: 10,
+    background: "#EEF6FF",
+    color: "#38546a",
+    fontSize: 12,
+  },
+  groupMemberBlock: { borderBottom: `1px solid ${colors.border}`, paddingBottom: 6 },
+  subtaskBox: { padding: "0 4px 4px 44px" },
+  subtaskToggle: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    padding: "3px 8px",
+    border: `1px solid ${colors.border}`,
+    borderRadius: 999,
+    background: colors.white,
+    color: "#0b6f6a",
+    fontSize: 11,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  subtaskEmpty: { fontSize: 11.5, color: colors.muted, padding: "4px 2px" },
+  subtaskRow: {
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 8,
+    padding: "6px 8px",
+    marginTop: 4,
+    borderRadius: 8,
+    background: "#F7FBFC",
+  },
+  subtaskItemTitle: { fontSize: 12.5, fontWeight: 600, color: colors.text, overflowWrap: "anywhere" },
+  subtaskMeta: { display: "flex", alignItems: "center", gap: 4, flexWrap: "wrap", marginTop: 2, fontSize: 10.5, color: colors.muted },
+  subtaskMove: {
+    height: 26,
+    maxWidth: 130,
+    padding: "0 6px",
+    border: `1px solid ${colors.border}`,
+    borderRadius: 7,
+    background: colors.white,
+    fontSize: 11,
+    color: colors.text,
+    cursor: "pointer",
+  },
+  subtaskRemove: {
+    width: 26,
+    height: 26,
+    display: "grid",
+    placeItems: "center",
+    border: "1px solid #fecaca",
+    borderRadius: 7,
+    background: colors.white,
+    color: "#b91c1c",
+    cursor: "pointer",
+    flexShrink: 0,
+  },
+  subtaskAdd: { display: "flex", gap: 6, marginTop: 6 },
+  subtaskInput: {
+    flex: 1,
+    minWidth: 0,
+    height: 30,
+    padding: "0 10px",
+    border: `1px solid ${colors.border}`,
+    borderRadius: 8,
+    fontSize: 12,
+    outline: "none",
+  },
+  subtaskAddBtn: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 4,
+    height: 30,
+    padding: "0 12px",
+    border: 0,
+    borderRadius: 8,
+    background: "#0f9b91",
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  subtaskError: { marginTop: 6, fontSize: 11.5, color: "#b91c1c" },
   groupPanelHead: {
     display: "flex",
     alignItems: "center",
@@ -2206,6 +2476,75 @@ const styles = {
     marginTop: 2,
   },
 
+  reviewButton: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: 5,
+    height: 30,
+    padding: "0 11px",
+    borderRadius: 8,
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+    border: "1px solid",
+  },
+  reviewApprove: { color: "#fff", background: "#16a34a", borderColor: "#16a34a" },
+  reviewRework: { color: "#b45309", background: "#FFF8EB", borderColor: "#F5C77E" },
+  scoreOverlay: {
+    position: "fixed",
+    inset: 0,
+    zIndex: 10000,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 16,
+    background: "rgba(6,24,38,.55)",
+  },
+  scoreModal: {
+    width: "min(400px, 100%)",
+    padding: "24px 20px 20px",
+    borderRadius: 18,
+    background: "#fff",
+    textAlign: "center",
+    boxShadow: "0 30px 70px rgba(6,59,70,.3)",
+  },
+  scoreQuick: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 8, marginTop: 16 },
+  scoreQuickBtn: {
+    display: "flex",
+    flexDirection: "column",
+    alignItems: "center",
+    gap: 2,
+    padding: "10px 6px",
+    borderRadius: 12,
+    border: "2px solid #dcebef",
+    background: "#f7fbfc",
+    color: "#123B5D",
+    cursor: "pointer",
+  },
+  scoreQuickActive: { borderColor: "#0f9b91", background: "#E8F7F8", color: "#0b6f6a" },
+  scoreAll: { display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 5, marginTop: 12 },
+  scoreDot: {
+    width: 30,
+    height: 30,
+    borderRadius: 8,
+    border: "1px solid #dcebef",
+    background: "#fff",
+    color: "#38546a",
+    fontSize: 12,
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  scoreDotActive: { background: "#0f9b91", borderColor: "#0f9b91", color: "#fff" },
+  reviewNote: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    marginTop: 8,
+    padding: "6px 9px",
+    borderRadius: 8,
+    fontSize: 11.5,
+    lineHeight: 1.4,
+  },
   groupRowRight: {
     display: "flex",
     alignItems: "center",
@@ -4068,8 +4407,11 @@ const TaskFormModal = ({
               </span>
             </div>
 
-            <strong>
-              +{reward} points on completion
+            <strong title="When approving the task, the assigner gives a score 1–10 — that becomes the assignee's points">
+              Score 1–10 on approval
+              <span style={{ display: "block", fontSize: 10, fontWeight: 600, opacity: 0.75 }}>
+                given by the assigner · added to the score
+              </span>
             </strong>
           </div>
 
@@ -4696,6 +5038,8 @@ const TasksPage = () => {
   ] = useState("");
 
   const [actionMessage, setActionMessage] = useState("");
+  // "Approve" opens this: the assigner gives a score 1–10
+  const [scoreDialogTask, setScoreDialogTask] = useState(null);
   const [taskToDelete, setTaskToDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
 
@@ -5302,7 +5646,8 @@ const TasksPage = () => {
         );
 
         setActionError(
-          err?.message ||
+          err?.response?.data?.message ||
+            err?.message ||
             "Failed to save task status."
         );
 
@@ -5324,6 +5669,49 @@ const TasksPage = () => {
         );
       }
     };
+
+  /* =====================================================
+     REVIEW — the assigner approves (Completed + score)
+     or sends the task back for rework
+  ===================================================== */
+
+  const reloadQuietly = () => loadTasks({ silent: true });
+
+  const handleReview = async (task, decision, givenScore) => {
+    let note = "";
+    if (decision === "complete" && givenScore === undefined) {
+      setScoreDialogTask(task); // pick the score first
+      return;
+    }
+    if (decision === "rework") {
+      const reason = window.prompt(
+        `What should ${task.assignedUser || "the assignee"} rework in "${task.name}"?\n(They will get this message)`
+      );
+      if (reason === null) return; // cancelled
+      note = reason.trim();
+    }
+
+    setActionError("");
+    setUpdatingTaskIds((prev) => ({ ...prev, [task.id]: true }));
+    try {
+      const response = await api.patch(`/tasks/${task.id}/status`, {
+        status: decision === "complete" ? "Completed" : "In Progress",
+        note,
+        ...(decision === "complete" ? { score: givenScore } : {}),
+      });
+      setScoreDialogTask(null);
+      setActionMessage(response.data?.message || (decision === "complete" ? "Task completed." : "Sent back for rework."));
+      await loadTasks({ silent: true });
+    } catch (err) {
+      setActionError(err?.response?.data?.message || err.message || "Could not save the review.");
+    } finally {
+      setUpdatingTaskIds((prev) => {
+        const next = { ...prev };
+        delete next[task.id];
+        return next;
+      });
+    }
+  };
 
   /* =====================================================
      DELETE
@@ -5406,6 +5794,8 @@ const TasksPage = () => {
           onToggleExpand: () => toggleGroup(task.id),
           memberActions: {
             onStatusChange: handleStatusChange,
+            onReview: handleReview,
+            onSubtasksChanged: reloadQuietly,
             editFor: editHandlerFor,
             deleteFor: deleteHandlerFor,
             updatingTaskIds,
@@ -5682,6 +6072,15 @@ const TasksPage = () => {
             <CheckCircle2 size={16} />
             <span style={{ flex: 1 }}>{actionMessage}</span>
           </div>
+        )}
+
+        {scoreDialogTask && (
+          <ScoreDialog
+            task={scoreDialogTask}
+            busy={Boolean(updatingTaskIds[scoreDialogTask.id])}
+            onCancel={() => setScoreDialogTask(null)}
+            onSubmit={(score) => handleReview(scoreDialogTask, "complete", score)}
+          />
         )}
 
         {showImport && (
@@ -6396,6 +6795,8 @@ const TasksPage = () => {
                     onStatusChange={
                       handleStatusChange
                     }
+                    onReview={handleReview}
+                    onSubtasksChanged={reloadQuietly}
                     onEdit={editHandlerFor(
                       task
                     )}
@@ -6522,6 +6923,8 @@ const TasksPage = () => {
                                 onStatusChange={
                                   handleStatusChange
                                 }
+                                onReview={handleReview}
+                                onSubtasksChanged={reloadQuietly}
                                 onEdit={editHandlerFor(
                                   task
                                 )}
@@ -6777,6 +7180,8 @@ const TaskCard = ({
   task,
   visibleFields = {},
   onStatusChange,
+  onReview,
+  onSubtasksChanged,
   onEdit,
   onDelete,
   animationIndex = 0,
@@ -7165,8 +7570,9 @@ const TaskCard = ({
                       <option
                         key={s}
                         value={s}
+                        disabled={statusOptionDisabled(task, s)}
                       >
-                        {s}
+                        {statusOptionLabel(task, s)}
                       </option>
                     )
                   )}
@@ -7283,11 +7689,161 @@ const TaskCard = ({
         </div>
       </div>
 
+      {!task.isGroup && <ReviewInfo task={task} onReview={onReview} busy={statusUpdating} />}
+
+      {!task.isGroup && onSubtasksChanged && (
+        <div style={{ padding: "0 16px 14px" }}>
+          <SubtaskList task={task} onChanged={onSubtasksChanged} />
+        </div>
+      )}
+
       {task.isGroup && expanded && (
         <GroupMembersPanel
           members={task.members}
           actions={memberActions}
         />
+      )}
+    </div>
+  );
+};
+
+/* =========================================================
+   Subtasks of one person's task: who assigned each one, tick,
+   move to another person of the shared task, assign new ones.
+   POST/PATCH/DELETE /api/tasks/:id/subtasks[/:subId]
+========================================================= */
+const SubtaskList = ({ task, others = [], onChanged, startOpen = false }) => {
+  const me = getSessionUser();
+  const myId = String(me?._id || me?.id || "");
+  const canManage = canModifyTask(me, task);
+  const isAssignee = String(task.assignedTo || "") === myId;
+  const list = Array.isArray(task.subtasks) ? task.subtasks : [];
+  const done = list.filter((s) => s?.completed).length;
+
+  const [open, setOpen] = useState(startOpen);
+  const [title, setTitle] = useState("");
+  const [busy, setBusy] = useState("");
+  const [error, setError] = useState("");
+
+  if (!list.length && !canManage) return null;
+
+  const run = async (key, request) => {
+    setBusy(key);
+    setError("");
+    try {
+      await request();
+      await onChanged?.();
+    } catch (err) {
+      setError(err?.response?.data?.message || err.message || "Could not save the subtask.");
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const add = (e) => {
+    e.preventDefault();
+    const value = title.trim();
+    if (!value) return;
+    run("add", async () => {
+      await api.post(`/tasks/${task.id}/subtasks`, { title: value });
+      setTitle("");
+    });
+  };
+
+  return (
+    <div style={styles.subtaskBox}>
+      <button type="button" onClick={() => setOpen((o) => !o)} style={styles.subtaskToggle} aria-expanded={open}>
+        <ListChecks size={13} />
+        Subtasks {list.length ? `${done}/${list.length}` : ""}
+        {canManage && !list.length ? " · assign one" : ""}
+        {open ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+      </button>
+
+      {open && (
+        <div style={{ marginTop: 6 }}>
+          {list.length === 0 && <div style={styles.subtaskEmpty}>No subtasks yet.</div>}
+          {list.map((sub, i) => {
+            const key = sub._id || `${i}`;
+            const canTick = Boolean(sub._id) && (canManage || isAssignee);
+            return (
+              <div key={key} style={styles.subtaskRow}>
+                <input
+                  type="checkbox"
+                  checked={Boolean(sub.completed)}
+                  disabled={!canTick || Boolean(busy)}
+                  onChange={(e) =>
+                    run(key, () => api.patch(`/tasks/${task.id}/subtasks/${sub._id}`, { completed: e.target.checked }))
+                  }
+                  aria-label={`Mark "${sub.title}" ${sub.completed ? "not done" : "done"}`}
+                  style={{ accentColor: "#0f9b91", marginTop: 2, cursor: canTick ? "pointer" : "default" }}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ ...styles.subtaskItemTitle, textDecoration: sub.completed ? "line-through" : "none", opacity: sub.completed ? 0.65 : 1 }}>
+                    {sub.title}
+                  </div>
+                  <div style={styles.subtaskMeta}>
+                    <UserRound size={10} />
+                    {sub.assignedByName ? `Assigned by ${sub.assignedByName}` : `Assigned by ${task.assignedByName || "the task creator"}`}
+                    {sub.assignedAt ? ` · ${formatDateTime(sub.assignedAt)}` : ""}
+                    {sub.completed && sub.completedAt ? ` · done ${formatDateTime(sub.completedAt)}` : ""}
+                  </div>
+                </div>
+                {canManage && sub._id && others.length > 0 && (
+                  <select
+                    value=""
+                    disabled={Boolean(busy)}
+                    onChange={(e) =>
+                      e.target.value &&
+                      run(key, () => api.patch(`/tasks/${task.id}/subtasks/${sub._id}`, { moveTo: e.target.value }))
+                    }
+                    style={styles.subtaskMove}
+                    aria-label={`Move "${sub.title}" to another person`}
+                    title="Give this subtask to another person"
+                  >
+                    <option value="">Move to…</option>
+                    {others.map((o) => (
+                      <option key={o.id} value={o.id}>{o.assignedUser || "Unassigned"}</option>
+                    ))}
+                  </select>
+                )}
+                {canManage && sub._id && (
+                  <button
+                    type="button"
+                    disabled={Boolean(busy)}
+                    onClick={() =>
+                      window.confirm(`Remove subtask "${sub.title}"?`) &&
+                      run(key, () => api.delete(`/tasks/${task.id}/subtasks/${sub._id}`))
+                    }
+                    style={styles.subtaskRemove}
+                    title="Remove subtask"
+                    aria-label={`Remove "${sub.title}"`}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+                {busy === key && <Loader2 size={12} style={{ animation: "ts-spin .9s linear infinite", color: colors.muted }} />}
+              </div>
+            );
+          })}
+
+          {canManage && (
+            <form onSubmit={add} style={styles.subtaskAdd}>
+              <input
+                value={title}
+                onChange={(e) => setTitle(e.target.value)}
+                placeholder={`Assign a subtask to ${task.assignedUser || "this person"}…`}
+                maxLength={300}
+                style={styles.subtaskInput}
+                disabled={busy === "add"}
+              />
+              <button type="submit" disabled={!title.trim() || busy === "add"} style={styles.subtaskAddBtn}>
+                {busy === "add" ? <Loader2 size={12} style={{ animation: "ts-spin .9s linear infinite" }} /> : <Plus size={12} />}
+                Assign
+              </button>
+            </form>
+          )}
+          {error && <div style={styles.subtaskError}>{error}</div>}
+        </div>
       )}
     </div>
   );
@@ -7306,9 +7862,17 @@ const formatDateTime = (value) => {
 
 const GroupMembersPanel = ({ members, actions = {} }) => (
   <div style={styles.groupPanel}>
+    <div style={styles.groupMainTask}>
+      <strong style={{ color: colors.text }}>Main task</strong>
+      <span>
+        <UserRound size={11} style={{ verticalAlign: "-1px" }} /> Assigned by{" "}
+        <strong>{members[0]?.assignedByName || "the task creator"}</strong> to {members.length} people
+        {members[0]?.createdAt ? ` · ${formatDateTime(members[0].createdAt)}` : ""}
+      </span>
+    </div>
     <div style={styles.groupPanelHead}>
       <ListChecks size={13} />
-      Each person's part
+      Each person's part &amp; subtasks
     </div>
 
     {members.map((m) => {
@@ -7322,7 +7886,8 @@ const GroupMembersPanel = ({ members, actions = {} }) => (
       const onDelete = actions.deleteFor?.(m);
 
       return (
-        <div key={m.id} className="ts-group-row" style={styles.groupRow}>
+        <div key={m.id} style={styles.groupMemberBlock}>
+        <div className="ts-group-row" style={styles.groupRow}>
           <div style={styles.groupPerson}>
             <span style={{ ...styles.groupAvatar, background: conf?.background, color: conf?.color }}>
               {(m.assignedUser || "?").trim().charAt(0).toUpperCase()}
@@ -7376,7 +7941,9 @@ const GroupMembersPanel = ({ members, actions = {} }) => (
                   aria-label={`Status for ${m.assignedUser || "this person"}`}
                 >
                   {TASK_STATUSES.map((st) => (
-                    <option key={st} value={st}>{st}</option>
+                    <option key={st} value={st} disabled={statusOptionDisabled(m, st)}>
+                      {statusOptionLabel(m, st)}
+                    </option>
                   ))}
                 </select>
                 {updating ? (
@@ -7392,6 +7959,10 @@ const GroupMembersPanel = ({ members, actions = {} }) => (
               </span>
             )}
 
+            {actions.onReview && reviewRoleOf(m).canReview && (
+              <ReviewActions task={m} onReview={actions.onReview} busy={updating} compact />
+            )}
+
             {onEdit && (
               <button type="button" onClick={() => onEdit(m)} style={styles.editButton} title={`Edit ${m.assignedUser || "this person"}'s part`}>
                 <Pencil size={13} />
@@ -7403,6 +7974,12 @@ const GroupMembersPanel = ({ members, actions = {} }) => (
               </button>
             )}
           </div>
+        </div>
+        <SubtaskList
+          task={m}
+          others={members.filter((o) => o.id !== m.id)}
+          onChanged={actions.onSubtasksChanged}
+        />
         </div>
       );
     })}
