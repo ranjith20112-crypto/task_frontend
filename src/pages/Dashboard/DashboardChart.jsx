@@ -23,6 +23,7 @@ import {
   UserPlus,
   MoreHorizontal,
   Send,
+  Check,
   CheckCheck,
   ArrowLeft,
   Plus,
@@ -259,6 +260,39 @@ const getMessageSenderId = (message) =>
       message?.author ??
       message?.user
   );
+
+// Read receipt on my own messages:
+// grey ✓ = sent, light ✓✓ = seen by some group members, blue ✓✓ = seen
+const SeenTick = ({ message, chat, meId }) => {
+  const others = (chat?.participants || []).filter((p) => getId(p) !== meId);
+  const readers = (message.readBy || []).map(getId).filter((id) => id && id !== meId);
+
+  if (!readers.length) {
+    return (
+      <span className="seen-tick" title="Sent" aria-label="Sent">
+        <Check size={12} />
+      </span>
+    );
+  }
+
+  const everyone = !others.length || others.every((p) => readers.includes(getId(p)));
+  const names = others
+    .filter((p) => readers.includes(getId(p)))
+    .map(getName)
+    .filter(Boolean);
+  const label =
+    chat?.type === "private" || !names.length
+      ? "Seen"
+      : everyone
+        ? "Seen by everyone"
+        : `Seen by ${names.join(", ")}`;
+
+  return (
+    <span className={`seen-tick ${everyone ? "seen" : "partial"}`} title={label} aria-label={label}>
+      <CheckCheck size={12} />
+    </span>
+  );
+};
 
 const getUnreadCount = (conversation) =>
   Math.max(
@@ -1039,12 +1073,12 @@ export default function Chats() {
     const socket = io(SOCKET_URL, {
       auth: { token },
       withCredentials: false,
-      transports: ["websocket", "polling"],
       reconnection: true,
       reconnectionAttempts: Infinity,
       reconnectionDelay: 2000,
       reconnectionDelayMax: 10000,
       timeout: 20000,
+      transports: ["websocket", "polling"],
     });
 
     socketRef.current = socket;
@@ -1150,8 +1184,26 @@ export default function Chats() {
       console.error("Chat socket connection failed:", err.message);
     });
 
+    // the other side opened the chat → mark my messages as seen
+    const handleMessagesRead = (payload = {}) => {
+      const id = String(payload.conversationId || "");
+      const readerId = String(payload.readerId || "");
+      if (!id || !readerId || getId(selectedConversationRef.current) !== id) return;
+
+      setMessages((previous) =>
+        previous.map((message) => {
+          if (getMessageSenderId(message) !== currentUserIdRef.current) return message;
+          const readBy = (message.readBy || []).map(getId);
+          return readBy.includes(readerId)
+            ? message
+            : { ...message, readBy: [...readBy, readerId] };
+        })
+      );
+    };
+
     socket.on("chat:message:new", handleIncomingMessage);
     socket.on("chat:unread:update", handleUnreadUpdate);
+    socket.on("chat:messages:read", handleMessagesRead);
     // groups created / renamed / members changed → refresh the list
     const handleGroupChange = () => refreshConversations();
     const handleRemoved = (payload) => {
@@ -1171,6 +1223,7 @@ export default function Chats() {
       socket.off("connect_error");
       socket.off("chat:message:new", handleIncomingMessage);
       socket.off("chat:unread:update", handleUnreadUpdate);
+      socket.off("chat:messages:read", handleMessagesRead);
       socket.disconnect();
 
       if (socketRef.current === socket) {
@@ -1312,6 +1365,9 @@ export default function Chats() {
         }
         .message-row.mine .message-bubble{border-color:#0e8d91;border-radius:15px 15px 5px 15px;color:white;background:linear-gradient(135deg,#075985,#0f9b91)}
         .message-meta{display:flex;align-items:center;justify-content:flex-end;gap:5px;margin-top:5px;color:#98aab5;font-size:9px}
+        .seen-tick{display:inline-flex;color:#98aab5}
+        .seen-tick.partial{color:#7fb3c9}
+        .seen-tick.seen{color:#0ea5e9}
         .composer{padding:13px 18px 17px;border-top:1px solid #dcecef;background:#fffffff0}
         .composer-box{gap:8px;padding:8px;border:1px solid #d7e7eb;border-radius:14px;background:#f7fbfc}
         .composer-box:focus-within{border-color:#74cbd0;background:white}
@@ -1710,7 +1766,7 @@ export default function Chats() {
                               <Timer size={10} aria-label="Disappearing message" />
                             )}
                             <span>{getTime(message.createdAt)}</span>
-                            {mine && <CheckCheck size={12} />}
+                            {mine && <SeenTick message={message} chat={activeChat} meId={currentUserId} />}
                           </div>
                         </div>
                       </div>
