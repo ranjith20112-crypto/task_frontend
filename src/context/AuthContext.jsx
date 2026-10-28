@@ -1,6 +1,7 @@
 // context/AuthContext.jsx
 
 import React, { createContext, useContext, useState, useEffect } from "react";
+import { unsubscribePushOnLogout } from "../services/pushNotifications";
 
 const AuthContext = createContext();
 
@@ -34,6 +35,7 @@ export const AuthProvider = ({ children }) => {
 
   // 🔑 LOGOUT — Remove everything
   const logout = () => {
+    unsubscribePushOnLogout(); // this browser stops getting this user's pushes
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     setToken(null);
