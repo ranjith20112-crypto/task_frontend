@@ -19,7 +19,8 @@ import {
   FileText,
 } from "lucide-react";
 
-import { getReportSummary, exportReportCSV } from "../../services/reportApi"; // ⚠️ adjust path
+// All API calls (https://task-backend-mn8a.onrender.com/api/reports/...) live in reportApi.js
+import { getReportSummary, exportReportCSV } from "../../services/reportApi";
 import IndividualReports from "./IndividualReports";
 
 // ============ STATIC CONFIG ============
@@ -75,6 +76,14 @@ const REPORT_HEADERS = [
   "Overdue",
 ];
 
+// Make every department row safe: numbers default to 0 (no NaN bar heights)
+const NUM_KEYS = ["total", "completed", "early", "onTime", "late", "review", "progress", "pending", "overdue"];
+const normalizeDepartment = (d = {}) => ({
+  ...d,
+  name: d.name || d.department || "Unassigned",
+  ...Object.fromEntries(NUM_KEYS.map((k) => [k, Number(d[k]) || 0])),
+});
+
 const Report = () => {
   // ---------- FILTERS ----------
   const [reportType, setReportType] = useState("Task Summary");
@@ -127,11 +136,19 @@ const Report = () => {
     setError(null);
 
     try {
-      const data = await getReportSummary(filters);
+      const raw = await getReportSummary(filters);
+      // accept { departments } or { data: { departments } }
+      const data = raw?.departments ? raw : raw?.data || raw || {};
 
-      const deptList = data.departments || [];
+      const deptList = Array.isArray(data.departments)
+        ? data.departments.map(normalizeDepartment)
+        : [];
       setDepartments(deptList);
-      setPriorities(data.priorities || []);
+      setPriorities(
+        Array.isArray(data.priorities)
+          ? data.priorities.map((p) => ({ ...p, value: Number(p.value) || 0 }))
+          : []
+      );
       setTotals({ ...EMPTY_TOTALS, ...(data.totals || {}) });
       setMeta({
         completionRate: data.completionRate ?? 0,
@@ -145,7 +162,11 @@ const Report = () => {
         setAllDepartmentNames(deptList.map((d) => d.name));
       }
     } catch (err) {
-      setError(err.message);
+      console.error("Report load failed:", err);
+      setError(
+        err?.message ||
+          "Could not load the report. The server may be waking up — try Retry in a few seconds."
+      );
     } finally {
       setLoading(false);
     }
@@ -186,8 +207,11 @@ const Report = () => {
   // ---------- ACTIONS ----------
   const handleRefresh = async () => {
     setRefreshing(true);
-    await loadReport();
-    setRefreshing(false);
+    try {
+      await loadReport();
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   // Escape values containing commas/quotes so the CSV stays valid
