@@ -8,6 +8,25 @@ import {
 import { getStoredUser, ROLE_LABELS } from "../../services/permissions";
 import { LifeBuoy, ChevronDown, ChevronUp } from "lucide-react";
 import SupportTicketThread from "./SupportTicketThread";
+import { unsubscribePushOnLogout } from "../../services/pushNotifications";
+
+// Backend address (always ends with /api) — works whatever src/api/config.js contains
+const API_BASE =
+  String(import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com")
+    .trim()
+    .replace(/\/+$/, "")
+    .replace(/\/api$/, "") + "/api";
+
+const errorText = (err, fallback) => {
+  const status = err?.response?.status;
+  const msg = err?.response?.data?.message || err?.response?.data?.error;
+  if (msg) return msg;
+  if (status === 401) return "Session expired. Please log in again.";
+  if (status === 403) return "You don't have permission for this action.";
+  if (status === 404) return "This feature's API route was not found on the server.";
+  if (!err?.response) return "Cannot reach the server (it may be waking up). Please try Refresh in a few seconds.";
+  return fallback;
+};
 
 const TICKET_STATUSES = ["Open", "In Progress", "Resolved", "Closed"];
 const PRIORITY_COLORS = { Urgent: "#be123c", High: "#c2410c", Medium: "#b45309", Low: "#0e7490" };
@@ -49,25 +68,26 @@ const SuperAdminDashboard = () => {
     setError("");
     try {
       const [adminRes, userRes, deptRes, statsRes, resetRes] = await Promise.all([
-        API.get("/api/admins"),
-        API.get("/api/users"),
-        API.get("/api/departments"),
-        API.get("/api/tasks/stats"),
-        API.get("/api/password-requests").catch(() => ({ data: { count: 0 } })),
+        API.get(`${API_BASE}/admins`),
+        API.get(`${API_BASE}/users`),
+        // optional sections never hide the rest of the dashboard
+        API.get(`${API_BASE}/departments`).catch(() => ({ data: { data: [] } })),
+        API.get(`${API_BASE}/tasks/stats`).catch(() => ({ data: { data: null } })),
+        API.get(`${API_BASE}/password-requests`).catch(() => ({ data: { count: 0 } })),
       ]);
       // Tickets load separately so a failure never hides the rest of the dashboard
-      API.get("/api/support/tickets", { params: { scope: "all" } })
-        .then((res) => setTickets(res.data.data || []))
+      API.get(`${API_BASE}/support/tickets`, { params: { scope: "all" } })
+        .then((res) => setTickets(res.data?.data || []))
         .catch(() => setTickets([]));
       setResetRequests(resetRes.data?.count || 0);
-      setAdmins(adminRes.data.data || []);
+      setAdmins(adminRes.data?.data || []);
       // /api/users returns Admins + members for SuperAdmin — the user table shows members
-      setUsers((userRes.data.data || []).filter((u) => u.role !== "Admin"));
-      setDepartments(deptRes.data.data || []);
-      setTaskStats(statsRes.data.data || null);
+      setUsers((userRes.data?.data || []).filter((u) => u.role !== "Admin"));
+      setDepartments(deptRes.data?.data || []);
+      setTaskStats(statsRes.data?.data || null);
     } catch (err) {
       console.error(err);
-      setError(err.response?.data?.message || "Failed to load dashboard data from the server.");
+      setError(errorText(err, "Failed to load dashboard data from the server."));
     } finally {
       setLoading(false);
     }
@@ -129,11 +149,11 @@ const SuperAdminDashboard = () => {
   const changeTicketStatus = async (ticket, status) => {
     setTicketBusy(ticket._id);
     try {
-      const res = await API.patch(`/api/support/tickets/${ticket._id}`, { status });
+      const res = await API.patch(`${API_BASE}/support/tickets/${ticket._id}`, { status });
       replaceTicket(res.data.data);
       setNotice(`${ticket.ticketId} marked ${status}. The user has been emailed.`);
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to update the ticket.");
+      setError(errorText(err, "Failed to update the ticket."));
     } finally {
       setTicketBusy(null);
     }
@@ -157,12 +177,12 @@ const SuperAdminDashboard = () => {
     setOverview(null);
     setOverviewLoading(true);
     try {
-      const res = await API.get(`/api/admins/${adminId}/overview`);
+      const res = await API.get(`${API_BASE}/admins/${adminId}/overview`);
       setOverview(res.data.data);
       setCompanyDraft(res.data.data.admin.companyName || "");
       setTimeout(() => document.getElementById("admin-overview")?.scrollIntoView({ behavior: "smooth", block: "start" }), 50);
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to load this Admin's details.");
+      setError(errorText(err, "Failed to load this Admin's details."));
       setOverviewId(null);
     } finally {
       setOverviewLoading(false);
@@ -172,12 +192,12 @@ const SuperAdminDashboard = () => {
   const saveCompany = async () => {
     if (!overview || !companyDraft.trim()) return;
     try {
-      await API.put(`/api/users/${overview.admin._id}`, { companyName: companyDraft.trim() });
+      await API.put(`${API_BASE}/users/${overview.admin._id}`, { companyName: companyDraft.trim() });
       setOverview((o) => ({ ...o, admin: { ...o.admin, companyName: companyDraft.trim() } }));
       setNotice("Company name saved.");
       fetchData();
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to save the company name.");
+      setError(errorText(err, "Failed to save the company name."));
     }
   };
 
@@ -185,11 +205,11 @@ const SuperAdminDashboard = () => {
     const next = account.status === "Active" ? "Inactive" : "Active";
     setBusyId(account._id);
     try {
-      await API.put(`/api/users/${account._id}`, { status: next });
+      await API.put(`${API_BASE}/users/${account._id}`, { status: next });
       setNotice(`${account.name} is now ${next}.`);
       await fetchData();
     } catch (err) {
-      setError(err.response?.data?.message || "Failed to update the account status.");
+      setError(errorText(err, "Failed to update the account status."));
     } finally {
       setBusyId(null);
     }
@@ -208,7 +228,7 @@ const SuperAdminDashboard = () => {
     }
     setCreating(true);
     try {
-      const res = await API.post("/api/admins", {
+      const res = await API.post(`${API_BASE}/admins`, {
         ...adminForm,
         name: adminForm.name.trim(),
         email: adminForm.email.trim(),
@@ -220,13 +240,19 @@ const SuperAdminDashboard = () => {
       setNotice(res.data?.message || "Admin account created.");
       await fetchData();
     } catch (err) {
-      setFormError(err.response?.data?.message || "Failed to create the admin.");
+      setFormError(errorText(err, "Failed to create the admin."));
     } finally {
       setCreating(false);
     }
   };
 
   const handleLogout = () => {
+    // this browser stops getting this user's pushes (never block logout if it fails)
+    try {
+      Promise.resolve(unsubscribePushOnLogout()).catch(() => {});
+    } catch {
+      /* ignore */
+    }
     localStorage.removeItem("token");
     localStorage.removeItem("user");
     navigate("/login", { replace: true });
