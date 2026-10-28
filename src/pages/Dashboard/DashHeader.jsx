@@ -1,4 +1,3 @@
-
 import React, {
   useEffect,
   useMemo,
@@ -25,10 +24,15 @@ import {
   CornerDownLeft,
   Loader2,
 } from "lucide-react";
+import { unsubscribePushOnLogout } from "../../services/pushNotifications";
 
-const API_URL = (
-  import.meta.env.VITE_API_URL || "http://localhost:5000"
-).replace(/\/+$/, "");
+// Backend ORIGIN without /api — the paths below already start with /api
+const API_URL = String(
+  import.meta.env.VITE_API_URL || "https://task-backend-mn8a.onrender.com"
+)
+  .trim()
+  .replace(/\/+$/, "")
+  .replace(/\/api$/, "");
 
 const DashHeader = ({
   navLinks = [],
@@ -192,20 +196,35 @@ const DashHeader = ({
     const headers = { Authorization: `Bearer ${token}` };
     const get = (path, allowed) =>
       allowed
-        ? axios.get(`${API_URL}${path}`, { headers }).then((r) => (Array.isArray(r.data?.data) ? r.data.data : []))
+        ? axios
+            .get(`${API_URL}${path}`, { headers, withCredentials: false })
+            .then((r) =>
+              Array.isArray(r.data?.data)
+                ? r.data.data
+                : Array.isArray(r.data?.tasks)
+                ? r.data.tasks
+                : Array.isArray(r.data?.meetings)
+                ? r.data.meetings
+                : Array.isArray(r.data)
+                ? r.data
+                : []
+            )
         : Promise.resolve([]);
 
-    const [tasks, meetings] = await Promise.allSettled([
-      get("/api/tasks", canSearch("/dashboard/tasks")),
-      get("/api/meetings", canSearch("/dashboard/mom")),
-    ]);
+    try {
+      const [tasks, meetings] = await Promise.allSettled([
+        get("/api/tasks", canSearch("/dashboard/tasks")),
+        get("/api/meetings", canSearch("/dashboard/mom")),
+      ]);
 
-    setSearchData({
-      tasks: tasks.status === "fulfilled" ? tasks.value : [],
-      meetings: meetings.status === "fulfilled" ? meetings.value : [],
-      loaded: true,
-    });
-    setSearchLoading(false);
+      setSearchData({
+        tasks: tasks.status === "fulfilled" ? tasks.value : [],
+        meetings: meetings.status === "fulfilled" ? meetings.value : [],
+        loaded: true,
+      });
+    } finally {
+      setSearchLoading(false);
+    }
   };
 
   const searchResults = useMemo(() => {
@@ -355,15 +374,18 @@ const DashHeader = ({
             headers: {
               Authorization: `Bearer ${token}`,
             },
+            withCredentials: false,
           }
         );
 
         if (cancelled) return;
 
-        const conversations = Array.isArray(
-          response.data?.conversations
-        )
+        const conversations = Array.isArray(response.data?.conversations)
           ? response.data.conversations
+          : Array.isArray(response.data?.data)
+          ? response.data.data
+          : Array.isArray(response.data)
+          ? response.data
           : [];
 
         const nextCounts = new Map();
@@ -515,6 +537,12 @@ const DashHeader = ({
       setMenuOpen(false);
     }
 
+    // this browser stops getting this user's pushes (never block logout if it fails)
+    try {
+      Promise.resolve(unsubscribePushOnLogout()).catch(() => {});
+    } catch {
+      /* ignore */
+    }
     localStorage.removeItem("user");
     localStorage.removeItem("token");
     sessionStorage.clear();
