@@ -107,6 +107,18 @@ const playCueSynth = (kind) => {
   }
 };
 
+/** "You win" fanfare for a completed task (always the built-in sound). */
+export const playWinSound = ({ force = false } = {}) => {
+  if (!force && !isSoundEnabled()) return;
+  const c = getContext();
+  if (!c) return;
+  if (c.state === "suspended") c.resume().catch(() => {});
+  const t = c.currentTime + 0.02;
+  // rising arpeggio C-E-G-C … then a held major chord
+  [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => bell(c, f, t + i * 0.11, 0.5, 0.2));
+  [523.25, 659.25, 783.99, 1046.5].forEach((f) => bell(c, f, t + 0.5, 1.6, 0.12));
+};
+
 /**
  * Play the cue sound. kind: "notification" | "chat" | "urgent".
  * force → play even when muted (the "test sound" button).
