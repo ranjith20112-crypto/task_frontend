@@ -1,23 +1,25 @@
-import React from "react";
+import React, { lazy, Suspense } from "react";
 import { Routes, Route, Navigate } from "react-router-dom";
 
-import Login from "../pages/Login/Login";
-import VerifyEmail from "../pages/VerifyEmail/VerifyEmail";
+import { PageLoader } from "../components/common/Loader";
 
-import Chats from "../pages/Dashboard/Chats";
-import MainDash from "../pages/Dashboard/maindash";
-import DashboardPage from "../pages/Dashboard/DashboardPage";
-import UsersPage from "../pages/Dashboard/users";
-import TasksPage from "../pages/Dashboard/tasks";
-import TaskBank from "../pages/Dashboard/taskbank";
-import TaskCalendar from "../pages/Dashboard/taskcalender";
-import MinutesOfMeeting from "../pages/Dashboard/mom";
-import DashboardChart from "../pages/Dashboard/DashboardChart";
-import Support from "../pages/Dashboard/support";
-import Roles from "../pages/Dashboard/roles";
-import Report from "../pages/Dashboard/report";
-import SettingsPage from "../pages/Dashboard/setting";
-import SuperAdminDashboard from "../pages/Dashboard/SuperAdminDashboard";
+/* Pages load on demand; the preloader shows while each one downloads */
+const Login = lazy(() => import("../pages/Login/Login"));
+const VerifyEmail = lazy(() => import("../pages/VerifyEmail/VerifyEmail"));
+
+const MainDash = lazy(() => import("../pages/Dashboard/maindash"));
+const DashboardPage = lazy(() => import("../pages/Dashboard/DashboardPage"));
+const UsersPage = lazy(() => import("../pages/Dashboard/users"));
+const TasksPage = lazy(() => import("../pages/Dashboard/tasks"));
+const TaskBank = lazy(() => import("../pages/Dashboard/taskbank"));
+const TaskCalendar = lazy(() => import("../pages/Dashboard/taskcalender"));
+const MinutesOfMeeting = lazy(() => import("../pages/Dashboard/mom"));
+const DashboardChart = lazy(() => import("../pages/Dashboard/DashboardChart"));
+const Support = lazy(() => import("../pages/Dashboard/support"));
+const Roles = lazy(() => import("../pages/Dashboard/roles"));
+const Report = lazy(() => import("../pages/Dashboard/report"));
+const SettingsPage = lazy(() => import("../pages/Dashboard/setting"));
+const SuperAdminDashboard = lazy(() => import("../pages/Dashboard/SuperAdminDashboard"));
 
 /* 🔒 Route guards (backend enforces the same rules on every API) */
 import {
@@ -126,6 +128,7 @@ const ReportsPage = () => (
 
 const AppRoutes = () => {
   return (
+    <Suspense fallback={<PageLoader fullScreen text="Loading…" />}>
     <Routes>
 
       {/* =====================================================
@@ -334,6 +337,7 @@ const AppRoutes = () => {
       />
 
     </Routes>
+    </Suspense>
   );
 };
 
