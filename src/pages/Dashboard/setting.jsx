@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useState } from "react";
 import API from "../../api/config";
 import { hasPermission } from "../../services/permissions";
 import ChatFileBackup from "./ChatFileBackup";
+import { disablePush, enablePush } from "../../services/pushNotifications";
 import {
   UserRound,
   ShieldCheck,
@@ -83,7 +84,7 @@ const Settings = () => {
     aiSummary: true,
     emailNotifications: true,
     taskReminders: true,
-    desktopNotifications: false,
+    desktopNotifications: true,
   });
 
   const [security, setSecurity] = useState({
@@ -174,6 +175,27 @@ const Settings = () => {
   };
 
   const togglePreference = (field) => {
+    // Desktop notifications → push for this browser (permission must be asked from the click)
+    if (field === "desktopNotifications" && !preferences.desktopNotifications) {
+      Promise.resolve(enablePush())
+        .catch((err) => {
+          console.error("enablePush failed:", err);
+          return "error";
+        })
+        .then((result) => {
+        if (result === "denied") {
+          setPreferences((prev) => ({ ...prev, desktopNotifications: false }));
+          showToast("Notifications are blocked in this browser. Allow them from the lock icon in the address bar.");
+        } else if (result === "unsupported") {
+          setPreferences((prev) => ({ ...prev, desktopNotifications: false }));
+          showToast("This browser does not support push notifications.");
+        } else if (result === "error") {
+          setPreferences((prev) => ({ ...prev, desktopNotifications: false }));
+          showToast("Could not turn on push notifications. Please try again.");
+        }
+      });
+    }
+
     setPreferences((prev) => ({
       ...prev,
       [field]: !prev[field],
@@ -213,12 +235,20 @@ const Settings = () => {
         // keep header / nav in sync with the saved name
         try {
           const stored = JSON.parse(localStorage.getItem("user") || "{}");
-          localStorage.setItem("user", JSON.stringify({ ...stored, name: me.name, phone: me.phone, department: me.department }));
+          localStorage.setItem("user", JSON.stringify({
+            ...stored,
+            name: me.name,
+            phone: me.phone,
+            department: me.department,
+            preferences: { ...(stored.preferences || {}), ...preferences },
+          }));
           window.dispatchEvent(new Event("user-updated"));
         } catch {
           /* ignore storage errors */
         }
       }
+
+      if (!preferences.desktopNotifications) Promise.resolve(disablePush()).catch(() => {}); // switched off → stop pushes to this browser
 
       setSaved(true);
       showToast("Profile settings saved successfully");
@@ -1721,7 +1751,7 @@ const Settings = () => {
                     <PreferenceRow
                       icon={<Bell size={18} />}
                       title="Desktop notifications"
-                      description="Show real-time browser notifications for updates."
+                      description="Push notifications for tasks, reviews, support and chat — even when the app is closed."
                       enabled={preferences.desktopNotifications}
                       onToggle={() =>
                         togglePreference("desktopNotifications")
