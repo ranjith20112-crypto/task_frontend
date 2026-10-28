@@ -7,7 +7,7 @@ import { Smile, Paperclip, FileText, Download, X, Loader2, Users, Check, UserPlu
 ========================================================= */
 
 export const CHAT_ALLOWED_EXT = ["jpg", "jpeg", "png", "gif", "webp", "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "csv", "zip", "mp3", "mp4"];
-export const CHAT_MAX_FILE = 10 * 1024 * 1024;
+export const CHAT_MAX_FILE = 5 * 1024 * 1024; // 5 MB per file (text is not limited)
 export const CHAT_MAX_FILES = 5;
 
 export const formatBytes = (n) =>
@@ -67,7 +67,7 @@ export const validateChatFiles = (list, current = []) => {
   for (const f of list) {
     const ext = f.name.split(".").pop().toLowerCase();
     if (!CHAT_ALLOWED_EXT.includes(ext)) problems.push(`${f.name}: file type not allowed`);
-    else if (f.size > CHAT_MAX_FILE) problems.push(`${f.name}: larger than 10 MB`);
+    else if (f.size > CHAT_MAX_FILE) problems.push(`${f.name}: larger than 5 MB`);
     else if (!f.size) problems.push(`${f.name}: empty file`);
     else accepted.push(f);
   }
@@ -83,7 +83,7 @@ export const AttachButton = ({ onFiles, disabled }) => {
   const ref = useRef(null);
   return (
     <>
-      <button type="button" className="composer-tool" onClick={() => ref.current?.click()} disabled={disabled} title="Attach files (max 10 MB each)" aria-label="Attach files">
+      <button type="button" className="composer-tool" onClick={() => ref.current?.click()} disabled={disabled} title="Attach files (max 5 MB each)" aria-label="Attach files">
         <Paperclip size={18} />
       </button>
       <input
