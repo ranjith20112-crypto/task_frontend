@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState, useCallback } from "react";
 import axios from "axios";
-import AchievementsCard from "./AchievementsCard";
+import AchievementsCard from "../../components/AchievementsCard";
 import {
   Search, ChevronDown, ArrowUpRight, CheckCircle2,
   Clock3, AlertTriangle, Activity, Target, ListTodo, RotateCcw, Zap,
