@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { Suspense, useEffect, useState } from 'react';
 import { Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { PageLoader, RouteProgress } from '../../components/common/Loader';
 
 import {
   LayoutDashboard,
@@ -13,7 +14,6 @@ import {
   ShieldCheck,
   BarChart3,
   Crown,
-  Loader2,
 } from 'lucide-react';
 
 import DashHeader from './DashHeader.jsx';
@@ -168,6 +168,8 @@ const MainDash = () => {
   return (
     <div style={styles.wrapper}>
 
+      <RouteProgress />
+
       <DashHeader
         navLinks={navLinks}
         activeLink={activeLink}
@@ -185,14 +187,13 @@ const MainDash = () => {
         }}
       >
         {ready ? (
-          // key → guards re-evaluate when role/permissions change
-          <Outlet key={`${currentUser?.role}-${JSON.stringify(currentUser?.permissions || {})}`} />
+          // Suspense keeps the header/sidebar while the next page loads
+          <Suspense fallback={<PageLoader text="Loading page…" />}>
+            {/* key → guards re-evaluate when role/permissions change */}
+            <Outlet key={`${currentUser?.role}-${JSON.stringify(currentUser?.permissions || {})}`} />
+          </Suspense>
         ) : (
-          <div style={styles.loading}>
-            <Loader2 size={22} style={{ animation: 'spin 1s linear infinite' }} />
-            Loading your workspace…
-            <style>{'@keyframes spin { to { transform: rotate(360deg); } }'}</style>
-          </div>
+          <PageLoader text="Loading your workspace…" />
         )}
       </div>
 
@@ -204,16 +205,6 @@ const styles = {
   wrapper: {
     backgroundColor: '#ffffff',
     minWidth: '320px',
-  },
-
-  loading: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    gap: '10px',
-    minHeight: '40vh',
-    color: '#18B3B2',
-    fontWeight: 600,
   },
 
   pageArea: {
